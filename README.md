@@ -9,10 +9,10 @@ ToDo:
     - template on canvas
     - start writing the introduction/background information
 - Think of ways in which we want to test our model, use the same as the original paper, or do more tests?
-- Create a diffusion model (residual vs scratch)
+- Create a diffusion model (residual vs scratch) (Itay, Nicky, ? )
     - how to sample from the trajectories
     - How to define the sample space?
-- full GVP-WM Code (hopefully get this from the author) (Yixin, Wenfu, Hongche) 
+- full GVP-WM Code (hopefully get this from the author) (Yixin, Wenfu, Hongchen) 
     - ALM code
     - add other subjections of author code ….
 - Finish the proposal plan
