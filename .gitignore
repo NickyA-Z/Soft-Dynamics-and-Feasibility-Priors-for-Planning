@@ -34,7 +34,7 @@ dino_wm/checkpoints/
 *.eggs
 .env
 venv/
-env/
+#env/
 
 # IDE
 .vscode/

@@ -20,6 +20,7 @@ if str(DINO_WM_ROOT) not in sys.path:
     sys.path.append(str(DINO_WM_ROOT))
 
 from plan import load_model
+from datasets.pusht_dset import ACTION_MEAN, ACTION_STD
 
 
 DATA_DIR = DINO_WM_ROOT / "data" / "pusht_noise" / "train"
@@ -40,13 +41,30 @@ def step_env(
     action: torch.Tensor,
     action_repeat: int,
     primitive_action_dim: int,
+    action_mean: torch.Tensor,
+    action_std: torch.Tensor,
 ) -> dict[str, torch.Tensor]:
-    action_np = action.detach().cpu().numpy()
-    primitive_actions = action_np.reshape(action_repeat, primitive_action_dim)
+    action_np = action.detach().cpu().numpy().reshape(action_repeat, primitive_action_dim)
+
+    mean_np = action_mean.detach().cpu().numpy()
+    std_np = action_std.detach().cpu().numpy()
+
+    primitive_rel_actions = ((action_np * std_np) + mean_np) * 100.0
 
     obs = None
-    for primitive_action in primitive_actions:
-        step_out = env.step(primitive_action)
+    for primitive_rel_action in primitive_rel_actions:
+        current_agent_pos = np.array(
+            [
+                env.unwrapped.agent.position[0],
+                env.unwrapped.agent.position[1],
+            ],
+            dtype=np.float32,
+        )
+
+        primitive_abs_action = current_agent_pos + primitive_rel_action
+        primitive_abs_action = np.clip(primitive_abs_action, 0.0, 512.0)
+
+        step_out = env.step(primitive_abs_action)
         if len(step_out) == 5:
             obs, _, terminated, truncated, _ = step_out
         else:
@@ -57,6 +75,8 @@ def step_env(
             break
 
     return to_runtime_observation(obs)
+
+
 
 
 
@@ -110,8 +130,14 @@ def main() -> None:
     wm_action_dim = int(model.action_encoder.patch_embed.in_channels)  # 10
     action_repeat = wm_action_dim // primitive_action_dim   # 5
 
-    primitive_low = torch.as_tensor(env.action_space.low, dtype=torch.float32, device=device)
-    primitive_high = torch.as_tensor(env.action_space.high, dtype=torch.float32, device=device)
+    primitive_low_raw = torch.as_tensor(env.action_space.low, dtype=torch.float32, device=device)
+    primitive_high_raw = torch.as_tensor(env.action_space.high, dtype=torch.float32, device=device)
+
+    action_mean = ACTION_MEAN.to(device=device, dtype=torch.float32)
+    action_std = ACTION_STD.to(device=device, dtype=torch.float32)
+
+    primitive_low = (primitive_low_raw / 100.0 - action_mean) / action_std
+    primitive_high = (primitive_high_raw / 100.0 - action_mean) / action_std
 
     action_low = primitive_low.repeat(action_repeat)
     action_high = primitive_high.repeat(action_repeat)
@@ -184,16 +210,18 @@ def main() -> None:
     result = planner.run_mpc(
         observation_history=[episode["start_obs"]],
         goal_observation=episode["goal_obs"],
-        step_fn=lambda action: step_env(env, action, action_repeat=action_repeat, primitive_action_dim=primitive_action_dim,),
+        step_fn=lambda action: step_env(env, action, action_repeat=action_repeat, primitive_action_dim=primitive_action_dim, 
+                                        action_mean=action_mean, action_std=action_std,),
         video_source=PrecomputedVideoPlanSource(episode["video_plan"], encoded=False),
     )
     print("planner finished")
     
     
-    print(
-        "first planner macro reshaped:",
-        result.executed_actions[0].detach().cpu().reshape(action_repeat, primitive_action_dim),
-    )
+    first_macro = result.executed_actions[0].detach().cpu().reshape(action_repeat, primitive_action_dim)
+    first_macro_raw = ((first_macro * action_std.cpu()) + action_mean.cpu()) * 100.0
+
+    print("first planner macro (normalized):", first_macro)
+    print("first planner macro (raw env scale):", first_macro_raw)
     print("first 5 expert actions:", episode["actions"][:5])
 
     
