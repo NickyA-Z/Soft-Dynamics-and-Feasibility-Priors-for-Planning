@@ -99,3 +99,42 @@ class DinoWorldModelAdapter(WorldModelAdapter):
         predicted = self.world_model.predict(conditioned)
         obs_only = self._strip_action_conditioning(predicted)
         return obs_only[0, -1]
+
+    def rollout(
+        self,
+        latent_context: torch.Tensor,
+        past_action_context: torch.Tensor,
+        planned_actions: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        latent_context: (T, D)
+        planned_actions: (H, action_dim)
+        """
+
+        latents = [latent_context[-1]]
+        z_hist = latent_context.clone()
+        a_hist = past_action_context.clone()
+
+        for a in planned_actions:
+            # append action
+            if a_hist.numel() == 0:
+                a_hist = a.unsqueeze(0)
+            else:
+                a_hist = torch.cat([a_hist, a.unsqueeze(0)], dim=0)
+
+            # truncate history
+            if self.history_length > 1:
+                #a_hist = a_hist[-(self.history_length - 1):]
+                a_hist = a_hist[-self.history_length:]
+
+            # predict next latent
+            z_next = self.predict_next_latent(z_hist, a_hist)
+
+            # update latent history
+            z_hist = torch.cat([z_hist, z_next.unsqueeze(0)], dim=0)[
+                -self.history_length:
+            ]
+
+            latents.append(z_next)
+
+        return torch.stack(latents, dim=0)

@@ -31,7 +31,7 @@ def apply_motion_blur(video: torch.Tensor, window: int) -> torch.Tensor:
     return torch.stack(blurred, dim=0)
 
 
-@dataclass(slots=True)
+@dataclass
 class PrecomputedVideoPlanSource(VideoPlanSource):
     data: Any
     encoded: bool = False
@@ -40,7 +40,7 @@ class PrecomputedVideoPlanSource(VideoPlanSource):
         return VideoPlan(data=self.data, encoded=self.encoded)
 
 
-@dataclass(slots=True)
+@dataclass
 class CallableVideoPlanSource(VideoPlanSource):
     generator: Callable[[Any, Any, int], Any]
     encoded: bool = False

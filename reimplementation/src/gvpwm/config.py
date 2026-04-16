@@ -1,7 +1,8 @@
 from dataclasses import dataclass, field
 
+from typing import Optional
 
-@dataclass(slots=True)
+@dataclass
 class ALMConfig:
     inner_steps: int = 25
     outer_steps: int = 25
@@ -12,7 +13,7 @@ class ALMConfig:
     lambda_video: float = 1.0
     lambda_goal: float = 10.0
     lambda_action: float = 0.05
-    clip_grad_norm: float | None = 10.0
+    clip_grad_norm: Optional[float] = 10.0
     use_video_init: bool = True
     use_video_loss: bool = True
     fix_states_to_video: bool = False
@@ -20,21 +21,21 @@ class ALMConfig:
     adam_eps: float = 1e-8
 
 
-@dataclass(slots=True)
+@dataclass
 class RefinementConfig:
     enabled: bool = True
     num_samples: int = 500
     noise_std: float = 0.3
 
 
-@dataclass(slots=True)
+@dataclass
 class MPCConfig:
     horizon: int = 25
     execution_stride: int = 1
     warm_start: bool = True
 
 
-@dataclass(slots=True)
+@dataclass
 class PlannerConfig:
     alm: ALMConfig = field(default_factory=ALMConfig)
     mpc: MPCConfig = field(default_factory=MPCConfig)

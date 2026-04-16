@@ -1,10 +1,41 @@
+# macOS
 .DS_Store
+__MACOSX/
+._*
+
+# Python
 __pycache__/
 *.py[cod]
-.pytest_cache/
 *.egg-info/
 .coverage
 .mypy_cache/
 .ruff_cache/
+.pytest_cache/
 dist/
 build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Hydra outputs
+outputs/
+multirun/
+
+# Logs and shell output files
+*.out
+*.log
+
+# Large data and model files (use DVC or external storage)
+dino_wm/data/
+dino_wm/checkpoints/
+
+# Conda / virtual environments
+*.egg
+*.eggs
+.env
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/

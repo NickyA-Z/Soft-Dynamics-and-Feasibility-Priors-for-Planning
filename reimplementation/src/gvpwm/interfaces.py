@@ -10,7 +10,7 @@ import torch.nn as nn
 from .utils import ensure_history_length
 
 
-@dataclass(slots=True)
+@dataclass
 class VideoPlan:
     data: Any
     encoded: bool = False
@@ -27,7 +27,7 @@ class VideoPlanSource(ABC):
         raise NotImplementedError
 
 
-@dataclass(slots=True)
+@dataclass
 class CollocationResult:
     latents: torch.Tensor
     actions: torch.Tensor
@@ -39,7 +39,7 @@ class CollocationResult:
     diagnostics: dict[str, float] = field(default_factory=dict)
 
 
-@dataclass(slots=True)
+@dataclass
 class MPCStepResult:
     step_index: int
     planned_actions: torch.Tensor
@@ -48,7 +48,7 @@ class MPCStepResult:
     dynamics_residual_norm: float
 
 
-@dataclass(slots=True)
+@dataclass
 class MPCResult:
     video_latents: torch.Tensor
     executed_actions: torch.Tensor
