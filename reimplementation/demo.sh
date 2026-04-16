@@ -1,10 +1,10 @@
 #!/bin/bash
-#SBATCH --partition=gpu_mig
+#SBATCH --partition=gpu_a100
 #SBATCH --gpus=1
 #SBATCH --job-name=toy_demo
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --time=0:05:00
+#SBATCH --time=1:00:00
 #SBATCH --output=toy_demo.out
 
 module purge

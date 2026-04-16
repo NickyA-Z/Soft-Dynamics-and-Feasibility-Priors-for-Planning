@@ -5,6 +5,7 @@ from pathlib import Path
 
 import gym
 import torch
+import numpy as np
 from omegaconf import OmegaConf
 
 from ..adapters.dino_wm import DinoWorldModelAdapter
@@ -77,14 +78,33 @@ def main() -> None:
     episode = load_oracle_episode(DATA_DIR, EPISODE_IDX)
     frame_skip = 5
     horizon = infer_horizon(episode["length"], frame_skip=frame_skip, max_horizon=MAX_HORIZON)
+    
 
     env = gym.make(model_cfg.env.name, *model_cfg.env.args, **model_cfg.env.kwargs)
+    
+
     reset_out = env.reset()
     if isinstance(reset_out, tuple):
         obs = reset_out[0]
     else:
         obs = reset_out
-    del obs
+
+    velocities = torch.load("/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm/data/pusht_noise/train/velocities.pth")
+    print(type(velocities))
+    print(velocities.shape)
+    print(velocities[EPISODE_IDX, 0])
+
+    initial_state = episode["states"][0].detach().cpu().numpy()
+    initial_velocity = velocities[EPISODE_IDX, 0].detach().cpu().numpy()
+
+    full_initial_state = np.concatenate([initial_state, initial_velocity], axis=0)
+    env.unwrapped._set_state(full_initial_state)
+    
+
+    print("oracle initial state:", initial_state)
+    print("initial velocity:", initial_velocity)
+    print("full initial state:", full_initial_state)
+
 
     primitive_action_dim = int(env.action_space.shape[0])   # 2
     wm_action_dim = int(model.action_encoder.patch_embed.in_channels)  # 10
@@ -136,6 +156,7 @@ def main() -> None:
     )
     """
 
+    
     planner = GVPWMPlanner(
         world_model=world_model,
         config=PlannerConfig(
@@ -154,9 +175,10 @@ def main() -> None:
             fix_states_to_video=False,
         ),
         mpc=MPCConfig(horizon=horizon, execution_stride=1, warm_start=True),
-        refinement=RefinementConfig(enabled=False, num_samples=0, noise_std=0.0),
+        refinement=RefinementConfig(enabled=True, num_samples=32, noise_std=0.3),
         ),
     )
+    
 
     print("starting planner")
     result = planner.run_mpc(
@@ -166,6 +188,64 @@ def main() -> None:
         video_source=PrecomputedVideoPlanSource(episode["video_plan"], encoded=False),
     )
     print("planner finished")
+    
+    
+    print(
+        "first planner macro reshaped:",
+        result.executed_actions[0].detach().cpu().reshape(action_repeat, primitive_action_dim),
+    )
+    print("first 5 expert actions:", episode["actions"][:5])
+
+    
+    
+    
+    print("executed action min:", result.executed_actions.min().item())
+    print("executed action max:", result.executed_actions.max().item())
+    print("first executed macro action:", result.executed_actions[0])
+
+
+    print("first planner macro action:", result.executed_actions[0].detach().cpu())
+    print("first planner macro reshaped:", result.executed_actions[0].detach().cpu().reshape(action_repeat, primitive_action_dim))
+    print("first 5 expert actions:", episode["actions"][:5])
+
+    
+    
+    
+    goal_state = np.concatenate(
+        [
+            episode["states"][-1].detach().cpu().numpy(),
+            episode["velocities"][-1].detach().cpu().numpy(),
+        ],
+        axis=0,
+    )
+
+    cur_state = np.array(
+        [
+            env.unwrapped.agent.position[0],
+            env.unwrapped.agent.position[1],
+            env.unwrapped.block.position[0],
+            env.unwrapped.block.position[1],
+            env.unwrapped.block.angle,
+            env.unwrapped.agent.velocity[0],
+            env.unwrapped.agent.velocity[1],
+        ],
+        dtype=np.float32,
+    )
+
+    metrics = env.unwrapped.eval_state(goal_state, cur_state)
+    print("goal_state:", goal_state)
+    print("cur_state:", cur_state)
+    print("eval metrics:", metrics)
+
+    
+    
+    
+    
+    print("agent position:", env.unwrapped.agent.position)
+    print("agent velocity:", env.unwrapped.agent.velocity)
+    print("block position:", env.unwrapped.block.position)
+    print("block angle:", env.unwrapped.block.angle)
+
 
     print("DINO-WM Push-T oracle demo")
     print(f"Episode index: {EPISODE_IDX}")
@@ -178,7 +258,7 @@ def main() -> None:
     print(f"Goal proprio shape: {episode['goal_obs']['proprio'].shape}")
     print(f"Executed latent shape: {tuple(result.executed_latents.shape)}")
     print(f"Executed action shape: {tuple(result.executed_actions.shape)}")
-
+    
 
 
 if __name__ == "__main__":
