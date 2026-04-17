@@ -49,22 +49,12 @@ def step_env(
     mean_np = action_mean.detach().cpu().numpy()
     std_np = action_std.detach().cpu().numpy()
 
-    primitive_rel_actions = ((action_np * std_np) + mean_np) * 100.0
+    # inverse of dataset normalization only
+    primitive_actions = (action_np * std_np) + mean_np
 
     obs = None
-    for primitive_rel_action in primitive_rel_actions:
-        current_agent_pos = np.array(
-            [
-                env.unwrapped.agent.position[0],
-                env.unwrapped.agent.position[1],
-            ],
-            dtype=np.float32,
-        )
-
-        primitive_abs_action = current_agent_pos + primitive_rel_action
-        primitive_abs_action = np.clip(primitive_abs_action, 0.0, 512.0)
-
-        step_out = env.step(primitive_abs_action)
+    for primitive_action in primitive_actions:
+        step_out = env.step(primitive_action)
         if len(step_out) == 5:
             obs, _, terminated, truncated, _ = step_out
         else:
@@ -80,7 +70,10 @@ def step_env(
 
 
 
-def main() -> None:
+
+def evaluate_episode(episode_idx: int) -> dict:
+    EVAL_EPISODE_IDX = episode_idx
+    
     torch.manual_seed(0)
 
     model_path = DINO_WM_ROOT / "checkpoints" / "outputs" / MODEL_NAME
@@ -110,9 +103,7 @@ def main() -> None:
         obs = reset_out
 
     velocities = torch.load("/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm/data/pusht_noise/train/velocities.pth")
-    print(type(velocities))
-    print(velocities.shape)
-    print(velocities[EPISODE_IDX, 0])
+
 
     initial_state = episode["states"][0].detach().cpu().numpy()
     initial_velocity = velocities[EPISODE_IDX, 0].detach().cpu().numpy()
@@ -120,10 +111,6 @@ def main() -> None:
     full_initial_state = np.concatenate([initial_state, initial_velocity], axis=0)
     env.unwrapped._set_state(full_initial_state)
     
-
-    print("oracle initial state:", initial_state)
-    print("initial velocity:", initial_velocity)
-    print("full initial state:", full_initial_state)
 
 
     primitive_action_dim = int(env.action_space.shape[0])   # 2
@@ -136,9 +123,8 @@ def main() -> None:
     action_mean = ACTION_MEAN.to(device=device, dtype=torch.float32)
     action_std = ACTION_STD.to(device=device, dtype=torch.float32)
 
-    primitive_low = (primitive_low_raw / 100.0 - action_mean) / action_std
-    primitive_high = (primitive_high_raw / 100.0 - action_mean) / action_std
-
+    primitive_low = torch.full((primitive_action_dim,), -3.0, device=device, dtype=torch.float32)
+    primitive_high = torch.full((primitive_action_dim,), 3.0, device=device, dtype=torch.float32)
     action_low = primitive_low.repeat(action_repeat)
     action_high = primitive_high.repeat(action_repeat)
 
@@ -223,20 +209,6 @@ def main() -> None:
     print("first planner macro (normalized):", first_macro)
     print("first planner macro (raw env scale):", first_macro_raw)
     print("first 5 expert actions:", episode["actions"][:5])
-
-    
-    
-    
-    print("executed action min:", result.executed_actions.min().item())
-    print("executed action max:", result.executed_actions.max().item())
-    print("first executed macro action:", result.executed_actions[0])
-
-
-    print("first planner macro action:", result.executed_actions[0].detach().cpu())
-    print("first planner macro reshaped:", result.executed_actions[0].detach().cpu().reshape(action_repeat, primitive_action_dim))
-    print("first 5 expert actions:", episode["actions"][:5])
-
-    
     
     
     goal_state = np.concatenate(
@@ -261,11 +233,8 @@ def main() -> None:
     )
 
     metrics = env.unwrapped.eval_state(goal_state, cur_state)
-    print("goal_state:", goal_state)
-    print("cur_state:", cur_state)
-    print("eval metrics:", metrics)
 
-    
+    print("eval metrics:", metrics)
     
     
     
@@ -287,6 +256,27 @@ def main() -> None:
     print(f"Executed latent shape: {tuple(result.executed_latents.shape)}")
     print(f"Executed action shape: {tuple(result.executed_actions.shape)}")
     
+    return {
+        "episode_idx": episode_idx,
+        "success": bool(metrics["success"]),
+        "state_dist": float(metrics["state_dist"]),
+        "dynamics_residual": float(result.steps[-1].dynamics_residual_norm),
+        "executed_actions": int(result.executed_actions.shape[0]),
+        "planning_horizon": int(horizon),
+    }
+    
+
+def main():
+    result = evaluate_episode(0)
+    #results = [evaluate_episode(idx) for idx in EPISODE_INDICES]
+    #success_rate = sum(r["success"] for r in results) / len(results)
+
+    #print("Evaluation summary")
+    #for r in results:
+        #print(r)
+
+    #print(f"Success rate: {success_rate:.4f}")
+
 
 
 if __name__ == "__main__":
