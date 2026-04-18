@@ -25,7 +25,6 @@ from datasets.pusht_dset import ACTION_MEAN, ACTION_STD
 
 DATA_DIR = DINO_WM_ROOT / "data" / "pusht_noise" / "train"
 MODEL_NAME = "pusht"
-EPISODE_IDX = 1
 MAX_HORIZON = None
 
 
@@ -71,30 +70,27 @@ def step_env(
 
 
 
-def evaluate_episode(episode_idx: int) -> dict:
-    EVAL_EPISODE_IDX = episode_idx
-    
-    torch.manual_seed(0)
-
+def load_model_once(device):
     model_path = DINO_WM_ROOT / "checkpoints" / "outputs" / MODEL_NAME
     model_cfg = OmegaConf.load(model_path / "hydra.yaml")
     model_ckpt = model_path / "checkpoints" / "model_latest.pth"
+    model = load_model(model_ckpt, model_cfg, model_cfg.num_action_repeat, device=device)
+    return model, model_cfg
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = load_model(
-        model_ckpt,
-        model_cfg,
-        model_cfg.num_action_repeat,
-        device=device,
-    )
 
-    episode = load_oracle_episode(DATA_DIR, EPISODE_IDX)
+def evaluate_episode(episode_idx: int, model=None, model_cfg=None, device=None) -> dict:
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if model is None or model_cfg is None:
+        model, model_cfg = load_model_once(device)
+
+    torch.manual_seed(episode_idx)
+
+    episode = load_oracle_episode(DATA_DIR, episode_idx)
     frame_skip = 5
     horizon = infer_horizon(episode["length"], frame_skip=frame_skip, max_horizon=MAX_HORIZON)
-    
 
     env = gym.make(model_cfg.env.name, *model_cfg.env.args, **model_cfg.env.kwargs)
-    
 
     reset_out = env.reset()
     if isinstance(reset_out, tuple):
@@ -104,9 +100,8 @@ def evaluate_episode(episode_idx: int) -> dict:
 
     velocities = torch.load("/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm/data/pusht_noise/train/velocities.pth")
 
-
     initial_state = episode["states"][0].detach().cpu().numpy()
-    initial_velocity = velocities[EPISODE_IDX, 0].detach().cpu().numpy()
+    initial_velocity = velocities[episode_idx, 0].detach().cpu().numpy()
 
     full_initial_state = np.concatenate([initial_state, initial_velocity], axis=0)
     env.unwrapped._set_state(full_initial_state)
@@ -135,14 +130,46 @@ def evaluate_episode(episode_idx: int) -> dict:
         action_low=action_low,
         action_high=action_high,
     )
+    
+    # smaller config for quick demo runs
+    planner = GVPWMPlanner(
+        world_model=world_model,
+        config=PlannerConfig(
+            alm=ALMConfig(
+                inner_steps=5,
+                outer_steps=2,
+                learning_rate=0.05,
+                rho_init=1.0,
+                rho_growth=1.5,
+                rho_max=50.0,
+                lambda_video=1.0,
+                lambda_goal=10.0,
+                lambda_action=0.05,
+                use_video_init=True,
+                use_video_loss=True,
+                fix_states_to_video=False,
+            ),
+            mpc=MPCConfig(
+                horizon=horizon,
+                execution_stride=1,
+                warm_start=True,
+            ),
+            refinement=RefinementConfig(
+                enabled=False,
+                num_samples=0,
+                noise_std=0.0,
+            ),
+        ),
+    )
 
-    """
+
+    """ full demo run with planner and environment interaction
     planner = GVPWMPlanner(
         world_model=world_model,
         config=PlannerConfig(
             alm=ALMConfig(
                 inner_steps=25,
-                outer_steps=25,
+                outer_steps=10,
                 learning_rate=0.05,
                 rho_init=1.0,
                 rho_growth=1.9,
@@ -161,35 +188,12 @@ def evaluate_episode(episode_idx: int) -> dict:
             ),
             refinement=RefinementConfig(
                 enabled=True,
-                num_samples=500,
+                num_samples=100,
                 noise_std=0.3,
             ),
         ),
     )
     """
-
-    
-    planner = GVPWMPlanner(
-        world_model=world_model,
-        config=PlannerConfig(
-            alm=ALMConfig(
-            inner_steps=5,
-            outer_steps=2,
-            learning_rate=0.05,
-            rho_init=1.0,
-            rho_growth=1.5,
-            rho_max=50.0,
-            lambda_video=1.0,
-            lambda_goal=10.0,
-            lambda_action=0.05,
-            use_video_init=True,
-            use_video_loss=True,
-            fix_states_to_video=False,
-        ),
-        mpc=MPCConfig(horizon=horizon, execution_stride=1, warm_start=True),
-        refinement=RefinementConfig(enabled=True, num_samples=32, noise_std=0.3),
-        ),
-    )
     
 
     print("starting planner")
@@ -244,18 +248,10 @@ def evaluate_episode(episode_idx: int) -> dict:
     print("block angle:", env.unwrapped.block.angle)
 
 
-    print("DINO-WM Push-T oracle demo")
-    print(f"Episode index: {EPISODE_IDX}")
-    print(f"Oracle length: {episode['length']}")
-    print(f"Planning horizon: {horizon}")
-    print(f"Executed {result.executed_actions.shape[0]} actions")
-    print(f"Final dynamics residual: {result.steps[-1].dynamics_residual_norm:.6f}")
-    
-    print(f"Start proprio shape: {episode['start_obs']['proprio'].shape}")
-    print(f"Goal proprio shape: {episode['goal_obs']['proprio'].shape}")
-    print(f"Executed latent shape: {tuple(result.executed_latents.shape)}")
-    print(f"Executed action shape: {tuple(result.executed_actions.shape)}")
-    
+    print(f"[ep {episode_idx}] oracle_len={episode['length']} horizon={horizon} "
+          f"success={metrics['success']} state_dist={metrics['state_dist']:.2f} "
+          f"dyn_residual={result.steps[-1].dynamics_residual_norm:.4f}")
+
     return {
         "episode_idx": episode_idx,
         "success": bool(metrics["success"]),
@@ -266,16 +262,31 @@ def evaluate_episode(episode_idx: int) -> dict:
     }
     
 
+EVAL_EPISODES = list(range(10))  # evaluate episodes 0-9
+EVAL_EPISODES = list(range(1))
+
+
 def main():
-    result = evaluate_episode(0)
-    #results = [evaluate_episode(idx) for idx in EPISODE_INDICES]
-    #success_rate = sum(r["success"] for r in results) / len(results)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model, model_cfg = load_model_once(device)
 
-    #print("Evaluation summary")
-    #for r in results:
-        #print(r)
+    results = []
+    for idx in EVAL_EPISODES:
+        print(f"\n=== Episode {idx} ===")
+        try:
+            r = evaluate_episode(idx, model=model, model_cfg=model_cfg, device=device)
+            results.append(r)
+        except Exception as exc:
+            print(f"[ep {idx}] ERROR: {exc}")
 
-    #print(f"Success rate: {success_rate:.4f}")
+    print("\n=== Evaluation Summary ===")
+    for r in results:
+        print(r)
+    if results:
+        success_rate = sum(r["success"] for r in results) / len(results)
+        mean_dist = sum(r["state_dist"] for r in results) / len(results)
+        mean_res = sum(r["dynamics_residual"] for r in results) / len(results)
+        print(f"Success rate: {success_rate:.3f}  mean_state_dist: {mean_dist:.2f}  mean_dyn_res: {mean_res:.4f}")
 
 
 
