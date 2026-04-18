@@ -74,6 +74,18 @@ class FeasibilityModel(nn.Module):
         layers.append(nn.Linear(in_dim, self.latent_dim))
         self.net = nn.Sequential(*layers)
 
+    def _ensure_batch(
+        self,
+        history: torch.Tensor,
+        action: torch.Tensor,
+        z: torch.Tensor,
+        noise_level: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, bool]:
+        """Adds a batch dimension if inputs are unbatched. Returns whether it was added."""
+        if z.ndim == 1:
+            return history.unsqueeze(0), action.unsqueeze(0), z.unsqueeze(0), noise_level.unsqueeze(0), True
+        return history, action, z, noise_level, False
+
     def _flatten_history(self, history: torch.Tensor) -> torch.Tensor:
         """Flattens the history of latents into a single feature vector for each sample."""
         expected = (self.history_length, self.latent_dim)
@@ -116,10 +128,12 @@ class FeasibilityModel(nn.Module):
         if z_noisy.shape[-1] != self.latent_dim:
             raise ValueError(f"Expected latent dim {self.latent_dim}, got {z_noisy.shape[-1]}.")
 
+        history, action, z_noisy, noise_level, was_unbatched = self._ensure_batch(history, action, z_noisy, noise_level)
         history_features = self._flatten_history(history)
         noise_features = self._prepare_noise_level(noise_level, z_noisy)
         features = torch.cat([history_features, action, z_noisy, noise_features], dim=-1)
-        return self.net(features)
+        result = self.net(features)
+        return result.squeeze(0) if was_unbatched else result
 
     def score(
         self,

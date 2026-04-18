@@ -170,12 +170,47 @@ class LatentCollocationSolver:
             residuals.append(candidate_latents[index + 1] - predicted_next)
         return torch.stack(residuals, dim=0)
 
+    def _feasibility_penalty(
+        self,
+        latent_context: torch.Tensor,
+        candidate_latents: torch.Tensor,
+        candidate_actions: torch.Tensor,
+    ) -> torch.Tensor:
+        """Computes the summed feasibility penalty over the horizon.
+
+        For each step t, evaluates P_theta = ||epsilon_theta(z_{t+1}, h_t, a_t, k*)||^2
+        using the history window up to t and the corresponding action.
+        """
+        assert self.feasibility_model is not None
+        history = ensure_history_length(
+            latent_context,
+            self.world_model.history_length,
+            pad_mode="repeat_first",
+        )
+        noise_level = candidate_latents.new_tensor(self.config_feasibility.noise_level)
+        total_penalty = candidate_latents.new_tensor(0.0)
+        for index in range(candidate_actions.shape[0]):
+            history_window = torch.cat([history, candidate_latents[1 : index + 1]], dim=0)[
+                -self.world_model.history_length :
+            ]
+            z_next = candidate_latents[index + 1]
+            action = candidate_actions[index]
+            total_penalty = total_penalty + self.feasibility_model.penalty(
+                history=history_window,
+                action=action,
+                z_noisy=z_next,
+                noise_level=noise_level,
+                reduction="mean",
+            )
+        return total_penalty
+
     def _objective(
         self,
         latents: torch.Tensor,
         actions: torch.Tensor,
         goal_latent: torch.Tensor,
         video_latents: torch.Tensor,
+        latent_context: torch.Tensor,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         video_loss = latents.new_tensor(0.0)
         if self.config.use_video_loss and latents.shape[0] > 2:
@@ -190,6 +225,20 @@ class LatentCollocationSolver:
         objective = self.config.lambda_video * video_loss
         objective += self.config.lambda_goal * goal_loss
         objective += self.config.lambda_action * action_loss
+
+        if self.config_feasibility.enabled:
+            feasibility_penalty = self._feasibility_penalty(
+                latent_context=latent_context,
+                candidate_latents=latents,
+                candidate_actions=actions,
+            )
+            objective += self.config_feasibility.lambda_feasibility * feasibility_penalty
+            return objective, {
+                "video_loss": video_loss,
+                "goal_loss": goal_loss,
+                "action_loss": action_loss,
+                "feasibility_penalty": feasibility_penalty,
+            }
 
         return objective, {
             "video_loss": video_loss,
@@ -277,6 +326,7 @@ class LatentCollocationSolver:
                     actions=actions,
                     goal_latent=goal_latent,
                     video_latents=video_latents,
+                    latent_context=latent_context,
                 )
                 augmented = objective
                 for index in range(residuals.shape[0]):
