@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-import torch
+import sys
+from pathlib import Path
 
-from ..config import ALMConfig, MPCConfig, PlannerConfig, RefinementConfig
+import gym
+import torch
+from omegaconf import OmegaConf
+
+from ..config import ALMConfig, FeasibilityConfig, MPCConfig, PlannerConfig, RefinementConfig, SolverConfig
 from ..planner import GVPWMPlanner
 from ..video import PrecomputedVideoPlanSource
 from .toy_world import ToyLinearWorldModel, ToyPointMassEnv, make_infeasible_video_plan
 
-from pathlib import Path
-from omegaconf import OmegaConf
-
-import gym
-
-import sys
 sys.path.append("/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm")
 
 from plan import load_model
@@ -61,16 +60,16 @@ def main() -> None:
         "visual": torch.tensor(obs["visual"]).permute(2, 0, 1).float() / 255.0,
         "proprio": torch.tensor(obs["proprio"]).float()
     }
-    
+
     #--------------------environment end-------------------#
     #--------------------toy video plan-------------------------#
     video_plan = trajectory
     #--------------------toy video plan end---------------------#
-    
+
     planner = GVPWMPlanner(
         world_model=world_model,
         config=PlannerConfig(
-            
+
             #alm=ALMConfig(
             #    inner_steps=60,
             #    outer_steps=10,
@@ -82,20 +81,22 @@ def main() -> None:
             #    rho_growth=1.5,
             #    rho_max=250.0,
             #),
-            
-            alm=ALMConfig(
+            solver=SolverConfig(
                 inner_steps=5,
-                outer_steps=2,
                 learning_rate=0.08,
                 lambda_video=0.5,
                 lambda_goal=10.0,
                 lambda_action=0.1,
+            ),
+            alm=ALMConfig(
+                outer_steps=2,
                 rho_init=1.0,
                 rho_growth=1.5,
                 rho_max=50.0,
             ),
             mpc=MPCConfig(horizon=horizon, execution_stride=1, warm_start=True),
             refinement=RefinementConfig(enabled=True, num_samples=64, noise_std=0.03),
+            feasibility=FeasibilityConfig(enabled=False),
         ),
     )
     def step_fn(action):

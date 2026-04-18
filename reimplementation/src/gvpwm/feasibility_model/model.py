@@ -51,6 +51,8 @@ class FeasibilityModel(nn.Module):
         num_layers: int,
         use_layer_norm: bool = False,
     ) -> None:
+        """Initializes the FeasibilityModel. Ensure that latent_dim, action_dim,
+        and history_length match those of the world model and planner."""
         super().__init__()
         self.latent_dim = latent_dim
         self.action_dim = action_dim

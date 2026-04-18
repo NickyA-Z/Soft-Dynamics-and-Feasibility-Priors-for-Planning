@@ -5,6 +5,7 @@ from typing import Any, Callable
 import torch
 
 from .config import PlannerConfig
+from .feasibility_model.model import FeasibilityModel
 from .interfaces import MPCResult, MPCStepResult, VideoPlan, VideoPlanSource, WorldModelAdapter
 from .losses import goal_mse
 from .solver import LatentCollocationSolver
@@ -13,10 +14,25 @@ from .video import temporal_resample_sequence
 
 
 class GVPWMPlanner:
-    def __init__(self, world_model: WorldModelAdapter, config: PlannerConfig) -> None:
+    def __init__(
+        self,
+        world_model: WorldModelAdapter,
+        config: PlannerConfig,
+        feasibility_model: FeasibilityModel | None = None,
+    ) -> None:
+        if config.feasibility.enabled and feasibility_model is None:
+            raise ValueError("Feasibility model must be provided if feasibility is enabled.")
+
         self.world_model = world_model
         self.config = config
-        self.solver = LatentCollocationSolver(world_model=world_model, config=config.alm)
+        self.feasibility_model = feasibility_model
+        self.solver = LatentCollocationSolver(
+            world_model=world_model,
+            config=config.solver,
+            config_alm=config.alm,
+            config_feasibility=config.feasibility,
+            feasibility_model=feasibility_model,
+        )
 
     def _encode_video(self, video_plan: VideoPlan, horizon: int) -> torch.Tensor:
         if video_plan.encoded:

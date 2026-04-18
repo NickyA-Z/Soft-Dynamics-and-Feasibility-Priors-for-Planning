@@ -2,16 +2,30 @@ from __future__ import annotations
 
 import torch
 
-from .config import ALMConfig
+from .config import ALMConfig, FeasibilityConfig, SolverConfig
+from .feasibility_model.model import FeasibilityModel
 from .interfaces import CollocationResult, WorldModelAdapter
 from .losses import goal_mse, scale_invariant_alignment, squared_norm
 from .utils import ensure_history_length
 
 
 class LatentCollocationSolver:
-    def __init__(self, world_model: WorldModelAdapter, config: ALMConfig) -> None:
+    def __init__(
+        self,
+        world_model: WorldModelAdapter,
+        config: SolverConfig,
+        config_alm: ALMConfig,
+        config_feasibility: FeasibilityConfig,
+        feasibility_model: FeasibilityModel | None = None,
+    ) -> None:
+        if config_feasibility.enabled and feasibility_model is None:
+            raise ValueError("Feasibility model must be provided if feasibility is enabled.")
+
         self.world_model = world_model
         self.config = config
+        self.config_alm = config_alm
+        self.config_feasibility = config_feasibility
+        self.feasibility_model = feasibility_model
 
     def _actions_from_parameter(self, action_parameter: torch.Tensor) -> torch.Tensor:
         if not self.config.use_action_reparameterization:
@@ -55,9 +69,7 @@ class LatentCollocationSolver:
                 device=current_latent.device,
                 dtype=current_latent.dtype,
             ).view(view_shape)
-            latents = current_latent.unsqueeze(0) + alpha * (
-                goal_latent.unsqueeze(0) - current_latent.unsqueeze(0)
-            )
+            latents = current_latent.unsqueeze(0) + alpha * (goal_latent.unsqueeze(0) - current_latent.unsqueeze(0))
         latents[0] = current_latent
         return latents
 
@@ -188,14 +200,14 @@ class LatentCollocationSolver:
             device=self.world_model.device,
             dtype=current_latent.dtype,
         )
-        rho = float(self.config.rho_init)
+        rho = float(self.config_alm.rho_init)
 
         diagnostics: dict[str, float] = {}
         final_objective = current_latent.new_tensor(0.0)
         final_augmented = current_latent.new_tensor(0.0)
         final_residuals = torch.zeros_like(multipliers)
 
-        for _ in range(self.config.outer_steps):
+        for _ in range(self.config_alm.outer_steps):
             for _ in range(self.config.inner_steps):
                 optimizer.zero_grad()
                 actions = self._actions_from_parameter(action_parameter)
@@ -235,14 +247,11 @@ class LatentCollocationSolver:
                 final_objective = objective.detach()
                 final_augmented = augmented.detach()
                 final_residuals = residuals.detach()
-                diagnostics = {
-                    key: float(value.detach().cpu())
-                    for key, value in pieces.items()
-                }
+                diagnostics = {key: float(value.detach().cpu()) for key, value in pieces.items()}
 
             with torch.no_grad():
                 multipliers = multipliers + rho * final_residuals
-                rho = min(rho * self.config.rho_growth, self.config.rho_max)
+                rho = min(rho * self.config_alm.rho_growth, self.config_alm.rho_max)
 
         final_actions = self._actions_from_parameter(action_parameter).detach()
         if latent_parameter is None:

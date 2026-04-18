@@ -9,7 +9,7 @@ import numpy as np
 from omegaconf import OmegaConf
 
 from ..adapters.dino_wm import DinoWorldModelAdapter
-from ..config import ALMConfig, MPCConfig, PlannerConfig, RefinementConfig
+from ..config import ALMConfig, FeasibilityConfig, MPCConfig, PlannerConfig, RefinementConfig, SolverConfig
 from ..planner import GVPWMPlanner
 from ..video import PrecomputedVideoPlanSource
 from .dino_oracle_utils import infer_horizon, load_oracle_episode
@@ -73,7 +73,7 @@ def step_env(
 
 def evaluate_episode(episode_idx: int) -> dict:
     EVAL_EPISODE_IDX = episode_idx
-    
+
     torch.manual_seed(0)
 
     model_path = DINO_WM_ROOT / "checkpoints" / "outputs" / MODEL_NAME
@@ -91,10 +91,10 @@ def evaluate_episode(episode_idx: int) -> dict:
     episode = load_oracle_episode(DATA_DIR, EPISODE_IDX)
     frame_skip = 5
     horizon = infer_horizon(episode["length"], frame_skip=frame_skip, max_horizon=MAX_HORIZON)
-    
+
 
     env = gym.make(model_cfg.env.name, *model_cfg.env.args, **model_cfg.env.kwargs)
-    
+
 
     reset_out = env.reset()
     if isinstance(reset_out, tuple):
@@ -110,7 +110,7 @@ def evaluate_episode(episode_idx: int) -> dict:
 
     full_initial_state = np.concatenate([initial_state, initial_velocity], axis=0)
     env.unwrapped._set_state(full_initial_state)
-    
+
 
 
     primitive_action_dim = int(env.action_space.shape[0])   # 2
@@ -168,17 +168,13 @@ def evaluate_episode(episode_idx: int) -> dict:
     )
     """
 
-    
+
     planner = GVPWMPlanner(
         world_model=world_model,
         config=PlannerConfig(
-            alm=ALMConfig(
+            solver=SolverConfig(
             inner_steps=5,
-            outer_steps=2,
             learning_rate=0.05,
-            rho_init=1.0,
-            rho_growth=1.5,
-            rho_max=50.0,
             lambda_video=1.0,
             lambda_goal=10.0,
             lambda_action=0.05,
@@ -186,31 +182,38 @@ def evaluate_episode(episode_idx: int) -> dict:
             use_video_loss=True,
             fix_states_to_video=False,
         ),
+            alm=ALMConfig(
+            outer_steps=2,
+            rho_init=1.0,
+            rho_growth=1.5,
+            rho_max=50.0,
+        ),
         mpc=MPCConfig(horizon=horizon, execution_stride=1, warm_start=True),
         refinement=RefinementConfig(enabled=True, num_samples=32, noise_std=0.3),
+        feasibility=FeasibilityConfig(enabled=False),
         ),
     )
-    
+
 
     print("starting planner")
     result = planner.run_mpc(
         observation_history=[episode["start_obs"]],
         goal_observation=episode["goal_obs"],
-        step_fn=lambda action: step_env(env, action, action_repeat=action_repeat, primitive_action_dim=primitive_action_dim, 
+        step_fn=lambda action: step_env(env, action, action_repeat=action_repeat, primitive_action_dim=primitive_action_dim,
                                         action_mean=action_mean, action_std=action_std,),
         video_source=PrecomputedVideoPlanSource(episode["video_plan"], encoded=False),
     )
     print("planner finished")
-    
-    
+
+
     first_macro = result.executed_actions[0].detach().cpu().reshape(action_repeat, primitive_action_dim)
     first_macro_raw = ((first_macro * action_std.cpu()) + action_mean.cpu()) * 100.0
 
     print("first planner macro (normalized):", first_macro)
     print("first planner macro (raw env scale):", first_macro_raw)
     print("first 5 expert actions:", episode["actions"][:5])
-    
-    
+
+
     goal_state = np.concatenate(
         [
             episode["states"][-1].detach().cpu().numpy(),
@@ -235,9 +238,9 @@ def evaluate_episode(episode_idx: int) -> dict:
     metrics = env.unwrapped.eval_state(goal_state, cur_state)
 
     print("eval metrics:", metrics)
-    
-    
-    
+
+
+
     print("agent position:", env.unwrapped.agent.position)
     print("agent velocity:", env.unwrapped.agent.velocity)
     print("block position:", env.unwrapped.block.position)
@@ -250,12 +253,12 @@ def evaluate_episode(episode_idx: int) -> dict:
     print(f"Planning horizon: {horizon}")
     print(f"Executed {result.executed_actions.shape[0]} actions")
     print(f"Final dynamics residual: {result.steps[-1].dynamics_residual_norm:.6f}")
-    
+
     print(f"Start proprio shape: {episode['start_obs']['proprio'].shape}")
     print(f"Goal proprio shape: {episode['goal_obs']['proprio'].shape}")
     print(f"Executed latent shape: {tuple(result.executed_latents.shape)}")
     print(f"Executed action shape: {tuple(result.executed_actions.shape)}")
-    
+
     return {
         "episode_idx": episode_idx,
         "success": bool(metrics["success"]),
@@ -264,7 +267,7 @@ def evaluate_episode(episode_idx: int) -> dict:
         "executed_actions": int(result.executed_actions.shape[0]),
         "planning_horizon": int(horizon),
     }
-    
+
 
 def main():
     result = evaluate_episode(0)
