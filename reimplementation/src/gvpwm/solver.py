@@ -27,6 +27,21 @@ class LatentCollocationSolver:
         self.config_feasibility = config_feasibility
         self.feasibility_model = feasibility_model
 
+    def _move_to_device(
+        self,
+        latent_context: torch.Tensor,
+        past_action_context: torch.Tensor,
+        goal_latent: torch.Tensor,
+        video_latents: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        device = self.world_model.device
+        return (
+            latent_context.to(device),
+            past_action_context.to(device),
+            goal_latent.to(device),
+            video_latents.to(device),
+        )
+
     def _actions_from_parameter(self, action_parameter: torch.Tensor) -> torch.Tensor:
         if not self.config.use_action_reparameterization:
             return torch.clamp(
@@ -48,7 +63,7 @@ class LatentCollocationSolver:
         scaled = scaled.clamp(-0.999999, 0.999999)
         return torch.atanh(scaled)
 
-    def _initialize_latents(
+    def _init_latents(
         self,
         current_latent: torch.Tensor,
         goal_latent: torch.Tensor,
@@ -73,7 +88,7 @@ class LatentCollocationSolver:
         latents[0] = current_latent
         return latents
 
-    def _initialize_actions(
+    def _init_actions(
         self,
         horizon: int,
         warm_start_actions: torch.Tensor | None,
@@ -87,6 +102,39 @@ class LatentCollocationSolver:
             device=device,
             dtype=self.world_model.action_low.dtype,
         )
+
+    def _init_params(
+        self,
+        initial_latents: torch.Tensor,
+        horizon: int,
+        warm_start_actions: torch.Tensor | None,
+    ) -> tuple[torch.nn.Parameter | None, torch.nn.Parameter, list[torch.nn.Parameter]]:
+        latent_parameter = None if self.config.fix_states_to_video else torch.nn.Parameter(initial_latents[1:].clone())
+        action_parameter = torch.nn.Parameter(
+            self._init_actions(
+                horizon=horizon,
+                warm_start_actions=warm_start_actions,
+                device=self.world_model.device,
+            )
+        )
+        parameters = [action_parameter]
+        if latent_parameter is not None:
+            parameters.insert(0, latent_parameter)
+        return latent_parameter, action_parameter, parameters
+
+    def _init_alm_state(
+        self,
+        horizon: int,
+        current_latent: torch.Tensor,
+    ) -> tuple[torch.Tensor, float]:
+        residual_shape = (horizon,) + tuple(current_latent.shape)
+        multipliers = torch.zeros(
+            residual_shape,
+            device=self.world_model.device,
+            dtype=current_latent.dtype,
+        )
+        rho = float(self.config_alm.rho_init)
+        return multipliers, rho
 
     def _dynamics_residuals(
         self,
@@ -138,70 +186,76 @@ class LatentCollocationSolver:
                 )
         goal_loss = goal_mse(latents[-1], goal_latent)
         action_loss = actions.pow(2).sum()
-        objective = (
-            self.config.lambda_video * video_loss
-            + self.config.lambda_goal * goal_loss
-            + self.config.lambda_action * action_loss
-        )
+
+        objective = self.config.lambda_video * video_loss
+        objective += self.config.lambda_goal * goal_loss
+        objective += self.config.lambda_action * action_loss
+
         return objective, {
             "video_loss": video_loss,
             "goal_loss": goal_loss,
             "action_loss": action_loss,
         }
 
-    def solve(
+    def _build_candidate_latents(
+        self,
+        current_latent: torch.Tensor,
+        latent_parameter: torch.nn.Parameter | None,
+        initial_latents: torch.Tensor,
+    ) -> torch.Tensor:
+        if latent_parameter is None:
+            return initial_latents
+        return torch.cat([current_latent.unsqueeze(0), latent_parameter], dim=0)
+
+    def _finalize(
+        self,
+        current_latent: torch.Tensor,
+        latent_parameter: torch.nn.Parameter | None,
+        action_parameter: torch.nn.Parameter,
+        initial_latents: torch.Tensor,
+        final_objective: torch.Tensor,
+        final_augmented: torch.Tensor,
+        final_residuals: torch.Tensor,
+        multipliers: torch.Tensor,
+        rho: float,
+        diagnostics: dict[str, float],
+    ) -> CollocationResult:
+        final_actions = self._actions_from_parameter(action_parameter).detach()
+        if latent_parameter is None:
+            final_latents = initial_latents.detach()
+        else:
+            final_latents = torch.cat(
+                [current_latent.unsqueeze(0), latent_parameter.detach()],
+                dim=0,
+            )
+        residual_norm = final_residuals.reshape(final_residuals.shape[0], -1).norm(dim=1).mean()
+        diagnostics.update({"rho": float(rho), "residual_norm": float(residual_norm.cpu())})
+        return CollocationResult(
+            latents=final_latents,
+            actions=final_actions,
+            objective=float(final_objective.cpu()),
+            augmented_lagrangian=float(final_augmented.cpu()),
+            dynamics_residual_norm=float(residual_norm.cpu()),
+            multipliers=multipliers.detach(),
+            rho=rho,
+            diagnostics=diagnostics,
+        )
+
+    def _solve_alm(
         self,
         latent_context: torch.Tensor,
         past_action_context: torch.Tensor,
         goal_latent: torch.Tensor,
         video_latents: torch.Tensor,
-        warm_start_latents: torch.Tensor | None = None,
-        warm_start_actions: torch.Tensor | None = None,
+        current_latent: torch.Tensor,
+        initial_latents: torch.Tensor,
+        latent_parameter: torch.nn.Parameter | None,
+        action_parameter: torch.nn.Parameter,
+        parameters: list[torch.nn.Parameter],
+        optimizer: torch.optim.Optimizer,
+        multipliers: torch.Tensor,
+        rho: float,
     ) -> CollocationResult:
-        latent_context = latent_context.to(self.world_model.device)
-        past_action_context = past_action_context.to(self.world_model.device)
-        goal_latent = goal_latent.to(self.world_model.device)
-        video_latents = video_latents.to(self.world_model.device)
-
-        current_latent = latent_context[-1]
-        horizon = video_latents.shape[0] - 1
-        initial_latents = self._initialize_latents(
-            current_latent=current_latent,
-            goal_latent=goal_latent,
-            video_latents=video_latents,
-            warm_start_latents=warm_start_latents,
-        )
-
-        if self.config.fix_states_to_video:
-            latent_parameter = None
-        else:
-            latent_parameter = torch.nn.Parameter(initial_latents[1:].clone())
-
-        action_parameter = torch.nn.Parameter(
-            self._initialize_actions(
-                horizon=horizon,
-                warm_start_actions=warm_start_actions,
-                device=self.world_model.device,
-            )
-        )
-
-        parameters = [action_parameter]
-        if latent_parameter is not None:
-            parameters.insert(0, latent_parameter)
-        optimizer = torch.optim.Adam(
-            parameters,
-            lr=self.config.learning_rate,
-            eps=self.config.adam_eps,
-        )
-
-        residual_shape = (horizon,) + tuple(current_latent.shape)
-        multipliers = torch.zeros(
-            residual_shape,
-            device=self.world_model.device,
-            dtype=current_latent.dtype,
-        )
-        rho = float(self.config_alm.rho_init)
-
         diagnostics: dict[str, float] = {}
         final_objective = current_latent.new_tensor(0.0)
         final_augmented = current_latent.new_tensor(0.0)
@@ -211,13 +265,7 @@ class LatentCollocationSolver:
             for _ in range(self.config.inner_steps):
                 optimizer.zero_grad()
                 actions = self._actions_from_parameter(action_parameter)
-                if latent_parameter is None:
-                    candidate_latents = initial_latents
-                else:
-                    candidate_latents = torch.cat(
-                        [current_latent.unsqueeze(0), latent_parameter],
-                        dim=0,
-                    )
+                candidate_latents = self._build_candidate_latents(current_latent, latent_parameter, initial_latents)
                 residuals = self._dynamics_residuals(
                     latent_context=latent_context,
                     past_action_context=past_action_context,
@@ -253,28 +301,93 @@ class LatentCollocationSolver:
                 multipliers = multipliers + rho * final_residuals
                 rho = min(rho * self.config_alm.rho_growth, self.config_alm.rho_max)
 
-        final_actions = self._actions_from_parameter(action_parameter).detach()
-        if latent_parameter is None:
-            final_latents = initial_latents.detach()
-        else:
-            final_latents = torch.cat(
-                [current_latent.unsqueeze(0), latent_parameter.detach()],
-                dim=0,
-            )
-        residual_norm = final_residuals.reshape(final_residuals.shape[0], -1).norm(dim=1).mean()
-        diagnostics.update(
-            {
-                "rho": float(rho),
-                "residual_norm": float(residual_norm.cpu()),
-            }
-        )
-        return CollocationResult(
-            latents=final_latents,
-            actions=final_actions,
-            objective=float(final_objective.cpu()),
-            augmented_lagrangian=float(final_augmented.cpu()),
-            dynamics_residual_norm=float(residual_norm.cpu()),
-            multipliers=multipliers.detach(),
+        return self._finalize(
+            current_latent=current_latent,
+            latent_parameter=latent_parameter,
+            action_parameter=action_parameter,
+            initial_latents=initial_latents,
+            final_objective=final_objective,
+            final_augmented=final_augmented,
+            final_residuals=final_residuals,
+            multipliers=multipliers,
             rho=rho,
             diagnostics=diagnostics,
         )
+
+    def _solve_feasibility(
+        self,
+        latent_context: torch.Tensor,
+        past_action_context: torch.Tensor,
+        goal_latent: torch.Tensor,
+        video_latents: torch.Tensor,
+        current_latent: torch.Tensor,
+        initial_latents: torch.Tensor,
+        latent_parameter: torch.nn.Parameter | None,
+        action_parameter: torch.nn.Parameter,
+        parameters: list[torch.nn.Parameter],
+        optimizer: torch.optim.Optimizer,
+        multipliers: torch.Tensor,
+        rho: float,
+    ) -> CollocationResult:
+        raise NotImplementedError
+
+    def _solve_langevin_alm(
+        self,
+        latent_context: torch.Tensor,
+        past_action_context: torch.Tensor,
+        goal_latent: torch.Tensor,
+        video_latents: torch.Tensor,
+        current_latent: torch.Tensor,
+        initial_latents: torch.Tensor,
+        latent_parameter: torch.nn.Parameter | None,
+        action_parameter: torch.nn.Parameter,
+        parameters: list[torch.nn.Parameter],
+        optimizer: torch.optim.Optimizer,
+        multipliers: torch.Tensor,
+        rho: float,
+    ) -> CollocationResult:
+        raise NotImplementedError
+
+    def solve(
+        self,
+        latent_context: torch.Tensor,
+        past_action_context: torch.Tensor,
+        goal_latent: torch.Tensor,
+        video_latents: torch.Tensor,
+        warm_start_latents: torch.Tensor | None = None,
+        warm_start_actions: torch.Tensor | None = None,
+    ) -> CollocationResult:
+        latent_context, past_action_context, goal_latent, video_latents = self._move_to_device(
+            latent_context, past_action_context, goal_latent, video_latents
+        )
+
+        current_latent = latent_context[-1]
+        horizon = video_latents.shape[0] - 1
+
+        initial_latents = self._init_latents(current_latent, goal_latent, video_latents, warm_start_latents)
+        latent_param, action_param, params = self._init_params(initial_latents, horizon, warm_start_actions)
+        multipliers, rho = self._init_alm_state(horizon, current_latent)
+        optimizer = torch.optim.Adam(params, lr=self.config.learning_rate, eps=self.config.adam_eps)
+
+        shared_kwargs = dict(
+            latent_context=latent_context,
+            past_action_context=past_action_context,
+            goal_latent=goal_latent,
+            video_latents=video_latents,
+            current_latent=current_latent,
+            initial_latents=initial_latents,
+            latent_parameter=latent_param,
+            action_parameter=action_param,
+            parameters=params,
+            optimizer=optimizer,
+            multipliers=multipliers,
+            rho=rho,
+        )
+
+        if self.config_alm.enabled and self.config_feasibility.enabled:
+            return self._solve_langevin_alm(**shared_kwargs)
+        if self.config_alm.enabled:
+            return self._solve_alm(**shared_kwargs)
+        if self.config_feasibility.enabled:
+            return self._solve_feasibility(**shared_kwargs)
+        raise ValueError("At least one of ALM or feasibility configs must be enabled.")
