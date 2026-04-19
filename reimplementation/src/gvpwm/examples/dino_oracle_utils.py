@@ -21,8 +21,10 @@ def load_oracle_episode(base_dir: str | Path, episode_idx: int) -> dict[str, Any
     base = Path(base_dir)
 
     abs_actions = torch.load(base / "abs_actions.pth")
+    rel_actions = torch.load(base / "rel_actions.pth")
     states = torch.load(base / "states.pth")
     velocities = torch.load(base / "velocities.pth")
+    
     with open(base / "seq_lengths.pkl", "rb") as handle:
         seq_lengths = pickle.load(handle)
 
@@ -41,6 +43,7 @@ def load_oracle_episode(base_dir: str | Path, episode_idx: int) -> dict[str, Any
     episode_states = states[episode_idx, :length]
     episode_proprio = episode_states[..., :4]
     episode_actions = abs_actions[episode_idx, : max(length - 1, 0)]
+    episode_rel_actions = rel_actions[episode_idx, : max(length - 1, 0)]
     episode_velocities = velocities[episode_idx, :length]
 
     video_plan = [
@@ -53,6 +56,7 @@ def load_oracle_episode(base_dir: str | Path, episode_idx: int) -> dict[str, Any
         "start_obs": video_plan[0],
         "goal_obs": video_plan[-1],
         "actions": episode_actions,
+        "rel_actions": episode_rel_actions,
         "states": episode_states,
         "proprio": episode_proprio,
         "velocities": episode_velocities,

@@ -39,3 +39,4 @@ venv/
 # IDE
 .vscode/
 .idea/
+.claude/

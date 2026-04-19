@@ -150,6 +150,10 @@ class GVPWMPlanner:
                 warm_start_latents=warm_start_latents,
                 warm_start_actions=warm_start_actions,
             )
+            ##########DEBUG##########
+            if time_index % 10 == 0 or remaining == 1:
+                print(f"[mpc step {time_index}] solver diagnostics: {result.diagnostics}(planner DEBUG)")
+            #########################
             planned_actions = self._refine_actions(
                 latent_context=latent_context,
                 past_action_context=past_action_history,

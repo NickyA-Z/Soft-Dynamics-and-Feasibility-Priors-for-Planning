@@ -124,7 +124,6 @@ class DinoWorldModelAdapter(WorldModelAdapter):
 
             # truncate history
             if self.history_length > 1:
-                #a_hist = a_hist[-(self.history_length - 1):]
                 a_hist = a_hist[-self.history_length:]
 
             # predict next latent
