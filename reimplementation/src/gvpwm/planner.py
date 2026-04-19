@@ -37,7 +37,7 @@ class GVPWMPlanner:
         device = actions.device
         candidates = [actions]
         for _ in range(self.config.refinement.num_samples):
-            noisy = actions + torch.randn_like(actions) * self.config.refinement.noise_std
+            noisy = actions + torch.randn_like(actions) * (self.config.refinement.noise_variance ** 0.5)
             noisy = noisy.clamp(
                 min=self.world_model.action_low,
                 max=self.world_model.action_high,

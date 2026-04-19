@@ -32,7 +32,7 @@ def main() -> None:
                 rho_max=250.0,
             ),
             mpc=MPCConfig(horizon=horizon, execution_stride=1, warm_start=True),
-            refinement=RefinementConfig(enabled=True, num_samples=64, noise_std=0.03),
+            refinement=RefinementConfig(enabled=True, num_samples=64, noise_variance=0.03 ** 2),
         ),
     )
     result = planner.run_mpc(

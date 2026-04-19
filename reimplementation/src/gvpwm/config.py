@@ -13,7 +13,7 @@ class ALMConfig:
     lambda_video: float = 1.0
     lambda_goal: float = 10.0
     lambda_action: float = 0.05
-    clip_grad_norm: Optional[float] = 10.0
+    clip_grad_norm: Optional[float] = None
     use_video_init: bool = True
     use_video_loss: bool = True
     fix_states_to_video: bool = False
@@ -27,7 +27,7 @@ class ALMConfig:
 class RefinementConfig:
     enabled: bool = True
     num_samples: int = 500
-    noise_std: float = 0.3
+    noise_variance: float = 0.3
 
 
 @dataclass

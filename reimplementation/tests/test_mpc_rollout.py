@@ -45,7 +45,7 @@ def test_build_planner_matches_paper_h25_defaults():
     assert abs(planner.config.alm.lambda_action - 0.05) < 1e-9
     assert planner.config.mpc.execution_stride == 1
     assert planner.config.refinement.num_samples == 500
-    assert abs(planner.config.refinement.noise_std - 0.3) < 1e-9
+    assert abs(planner.config.refinement.noise_variance - 0.3) < 1e-9
 
 
 def test_build_planner_uses_higher_action_regularization_for_long_horizon():

@@ -109,7 +109,7 @@ def build_planner(
             refinement=RefinementConfig(
                 enabled=True,
                 num_samples=500,
-                noise_std=0.3,
+                noise_variance=0.3,
             ),
         ),
     )
