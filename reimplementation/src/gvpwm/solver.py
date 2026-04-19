@@ -222,9 +222,13 @@ class LatentCollocationSolver:
                     video_latents=video_latents,
                 )
                 augmented = objective
+                if self.config.residual_reduction == "mean":
+                    pen_scale = 1.0 / float(residuals[0].numel())
+                else:
+                    pen_scale = 1.0
                 for index in range(residuals.shape[0]):
                     augmented = augmented + (multipliers[index] * residuals[index]).sum()
-                    augmented = augmented + 0.5 * rho * squared_norm(residuals[index])
+                    augmented = augmented + 0.5 * rho * pen_scale * squared_norm(residuals[index])
                 augmented.backward()
                 if self.config.clip_grad_norm is not None:
                     torch.nn.utils.clip_grad_norm_(parameters, self.config.clip_grad_norm)
@@ -260,7 +264,11 @@ class LatentCollocationSolver:
                     )
 
             with torch.no_grad():
-                multipliers = multipliers + rho * final_residuals
+                if self.config.residual_reduction == "mean":
+                    dual_scale = 1.0 / float(final_residuals[0].numel())
+                else:
+                    dual_scale = 1.0
+                multipliers = multipliers + rho * dual_scale * final_residuals
                 rho = min(rho * self.config.rho_growth, self.config.rho_max)
                 if self.config.diagnostic_outer:
                     outer_residual_norm = final_residuals.reshape(final_residuals.shape[0], -1).norm(dim=1).mean()

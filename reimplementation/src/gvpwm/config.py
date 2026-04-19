@@ -21,6 +21,7 @@ class ALMConfig:
     adam_eps: float = 1e-8
     diagnostic_inner_interval: Optional[int] = None
     diagnostic_outer: bool = False
+    residual_reduction: str = "sum"  # "sum" (paper) or "mean" (per-element-mean of ||L_dyn||^2)
 
 
 @dataclass
