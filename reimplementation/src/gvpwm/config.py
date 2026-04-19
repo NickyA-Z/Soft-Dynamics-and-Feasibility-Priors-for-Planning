@@ -22,6 +22,7 @@ class ALMConfig:
     diagnostic_inner_interval: Optional[int] = None
     diagnostic_outer: bool = False
     residual_reduction: str = "sum"  # "sum" (paper) or "mean" (per-element-mean of ||L_dyn||^2)
+    diagnostic_grad_norms: bool = False  # if True, print grad norms of latent/action parameters per inner step
 
 
 @dataclass

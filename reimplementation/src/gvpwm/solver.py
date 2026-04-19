@@ -230,6 +230,29 @@ class LatentCollocationSolver:
                     augmented = augmented + (multipliers[index] * residuals[index]).sum()
                     augmented = augmented + 0.5 * rho * pen_scale * squared_norm(residuals[index])
                 augmented.backward()
+                if (
+                    self.config.diagnostic_grad_norms
+                    and self.config.diagnostic_inner_interval is not None
+                    and (
+                        inner_index % self.config.diagnostic_inner_interval == 0
+                        or inner_index == self.config.inner_steps - 1
+                    )
+                ):
+                    a_grad = action_parameter.grad
+                    a_norm = float(a_grad.norm().cpu()) if a_grad is not None else float("nan")
+                    if latent_parameter is not None and latent_parameter.grad is not None:
+                        l_grad = latent_parameter.grad
+                        l_norm = float(l_grad.norm().cpu())
+                        l_mean_abs = float(l_grad.abs().mean().cpu())
+                    else:
+                        l_norm = float("nan")
+                        l_mean_abs = float("nan")
+                    print(
+                        f"[grad outer {outer_index} inner {inner_index}] "
+                        f"action_grad_norm={a_norm:.4e} "
+                        f"latent_grad_norm={l_norm:.4e} "
+                        f"latent_grad_mean_abs={l_mean_abs:.4e}"
+                    )
                 if self.config.clip_grad_norm is not None:
                     torch.nn.utils.clip_grad_norm_(parameters, self.config.clip_grad_norm)
                 optimizer.step()
