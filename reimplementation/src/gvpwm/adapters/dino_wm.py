@@ -24,6 +24,11 @@ class DinoWorldModelAdapter(WorldModelAdapter):
         )
         self.world_model = world_model
         self.observation_transform = observation_transform
+        # Freeze world model weights: ALM/planning only optimizes latent/action
+        # parameters, not the world model itself. Without this, every backward
+        # pass wastefully computes (and discards) gradients for all Transformer
+        # weights, making gradient-based planning prohibitively slow.
+        self.world_model.requires_grad_(False)
 
     def _prepare_observation(self, observation: Any) -> Mapping[str, torch.Tensor]:
         if self.observation_transform is not None:
@@ -122,9 +127,8 @@ class DinoWorldModelAdapter(WorldModelAdapter):
             else:
                 a_hist = torch.cat([a_hist, a.unsqueeze(0)], dim=0)
 
-            # truncate history
-            if self.history_length > 1:
-                a_hist = a_hist[-self.history_length:]
+            # truncate history (unconditional to handle history_length=1 correctly)
+            a_hist = a_hist[-self.history_length:]
 
             # predict next latent
             z_next = self.predict_next_latent(z_hist, a_hist)

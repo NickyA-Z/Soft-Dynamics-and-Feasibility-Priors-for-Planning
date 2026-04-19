@@ -64,6 +64,36 @@ def load_oracle_episode(base_dir: str | Path, episode_idx: int) -> dict[str, Any
     }
 
 
+def slice_oracle_episode(
+    episode: dict[str, Any],
+    horizon: int,
+    frame_skip: int,
+) -> dict[str, Any]:
+    required_frames = horizon * frame_skip + 1
+    if episode["length"] < required_frames:
+        raise ValueError(
+            f"Episode length {episode['length']} is too short for horizon={horizon} "
+            f"with frame_skip={frame_skip} (need {required_frames} frames)."
+        )
+
+    effective_length = required_frames
+    truncated = dict(episode)
+    truncated["video_plan"] = episode["video_plan"][:effective_length]
+    truncated["start_obs"] = truncated["video_plan"][0]
+    truncated["goal_obs"] = {
+        "visual": truncated["video_plan"][-1]["visual"],
+    }
+    truncated["actions"] = episode["actions"][: horizon * frame_skip]
+    truncated["rel_actions"] = episode["rel_actions"][: horizon * frame_skip]
+    truncated["states"] = episode["states"][:effective_length]
+    truncated["proprio"] = episode["proprio"][:effective_length]
+    truncated["velocities"] = episode["velocities"][:effective_length]
+    truncated["length"] = effective_length
+    truncated["planning_horizon"] = horizon
+    truncated["frame_skip"] = frame_skip
+    return truncated
+
+
 def infer_horizon(
     length: int,
     frame_skip: int = 1,
