@@ -17,6 +17,12 @@ def make_observation(frame, proprio):
     }
 
 
+def make_visual_only_observation(observation: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    return {
+        "visual": observation["visual"],
+    }
+
+
 def load_oracle_episode(base_dir: str | Path, episode_idx: int) -> dict[str, Any]:
     base = Path(base_dir)
 
@@ -78,11 +84,10 @@ def slice_oracle_episode(
 
     effective_length = required_frames
     truncated = dict(episode)
-    truncated["video_plan"] = episode["video_plan"][:effective_length]
-    truncated["start_obs"] = truncated["video_plan"][0]
-    truncated["goal_obs"] = {
-        "visual": truncated["video_plan"][-1]["visual"],
-    }
+    full_video_plan = episode["video_plan"][:effective_length]
+    truncated["video_plan"] = [make_visual_only_observation(obs) for obs in full_video_plan]
+    truncated["start_obs"] = full_video_plan[0]
+    truncated["goal_obs"] = make_visual_only_observation(full_video_plan[-1])
     truncated["actions"] = episode["actions"][: horizon * frame_skip]
     truncated["rel_actions"] = episode["rel_actions"][: horizon * frame_skip]
     truncated["states"] = episode["states"][:effective_length]

@@ -30,6 +30,11 @@ class _FakeActionEncoder:
         self.patch_embed = _FakePatchEmbed(action_dim)
 
 
+class _FakeEncoder:
+    def __init__(self, emb_dim):
+        self.emb_dim = emb_dim
+
+
 class RecordingFakeDinoModel(torch.nn.Module):
     """
     Simulates just enough of the DINO world model interface for
@@ -53,6 +58,7 @@ class RecordingFakeDinoModel(torch.nn.Module):
         self.num_proprio_repeat = 1
         self._num_patches = num_patches
         self._emb_dim = emb_dim
+        self.encoder = _FakeEncoder(emb_dim)
         self.action_dim = action_dim
         # attribute needed by demo to compute wm_action_dim
         self.action_encoder = _FakeActionEncoder(action_dim)
@@ -183,3 +189,30 @@ def test_rollout_with_history_length_1_does_not_crash():
         planned_actions=torch.zeros(horizon, 4),
     )
     assert result.shape[0] == horizon + 1
+
+
+def test_goal_loss_ignores_nonvisual_latent_dimensions():
+    adapter = make_adapter(history_length=2, action_dim=4)
+
+    latent = torch.zeros(3, 8)
+    goal = torch.zeros(3, 8)
+    # change only the non-visual slice
+    visual_dim = adapter.world_model._emb_dim
+    latent[:, visual_dim:] = 5.0
+
+    loss = adapter.goal_loss(latent, goal)
+    assert torch.isclose(loss, torch.tensor(0.0)), (
+        "Goal loss for DINO adapter should only depend on visual latent dimensions."
+    )
+
+
+def test_initialize_latents_from_video_keeps_current_nonvisual_state():
+    adapter = make_adapter(history_length=2, action_dim=4)
+
+    current = torch.zeros(3, 8)
+    current[:, 4:] = 7.0
+    video = torch.randn(5, 3, 8)
+    initialized = adapter.initialize_latents_from_video(current, video)
+
+    assert torch.allclose(initialized[0], current)
+    assert torch.allclose(initialized[:, :, 4:], torch.full((5, 3, 4), 7.0))

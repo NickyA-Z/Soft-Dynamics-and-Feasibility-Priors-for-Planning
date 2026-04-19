@@ -19,6 +19,8 @@ class ALMConfig:
     fix_states_to_video: bool = False
     use_action_reparameterization: bool = True
     adam_eps: float = 1e-8
+    diagnostic_inner_interval: Optional[int] = None
+    diagnostic_outer: bool = False
 
 
 @dataclass

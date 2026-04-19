@@ -4,7 +4,7 @@ import torch
 
 from .config import ALMConfig
 from .interfaces import CollocationResult, WorldModelAdapter
-from .losses import goal_mse, scale_invariant_alignment, squared_norm
+from .losses import squared_norm
 from .utils import ensure_history_length
 
 
@@ -45,7 +45,10 @@ class LatentCollocationSolver:
         if warm_start_latents is not None and warm_start_latents.shape[0] == horizon + 1:
             latents = warm_start_latents.clone()
         elif self.config.use_video_init:
-            latents = video_latents.clone()
+            latents = self.world_model.initialize_latents_from_video(
+                current_latent=current_latent,
+                video_latents=video_latents,
+            )
         else:
             view_shape = (horizon + 1,) + (1,) * current_latent.ndim
             alpha = torch.linspace(
@@ -120,11 +123,11 @@ class LatentCollocationSolver:
         video_loss = latents.new_tensor(0.0)
         if self.config.use_video_loss and latents.shape[0] > 2:
             for index in range(1, latents.shape[0] - 1):
-                video_loss = video_loss + scale_invariant_alignment(
+                video_loss = video_loss + self.world_model.video_alignment_loss(
                     latents[index],
                     video_latents[index],
                 )
-        goal_loss = goal_mse(latents[-1], goal_latent)
+        goal_loss = self.world_model.goal_loss(latents[-1], goal_latent)
         action_loss = actions.pow(2).sum()
         objective = (
             self.config.lambda_video * video_loss
@@ -195,8 +198,8 @@ class LatentCollocationSolver:
         final_augmented = current_latent.new_tensor(0.0)
         final_residuals = torch.zeros_like(multipliers)
 
-        for _ in range(self.config.outer_steps):
-            for _ in range(self.config.inner_steps):
+        for outer_index in range(self.config.outer_steps):
+            for inner_index in range(self.config.inner_steps):
                 optimizer.zero_grad()
                 actions = self._actions_from_parameter(action_parameter)
                 if latent_parameter is None:
@@ -239,10 +242,36 @@ class LatentCollocationSolver:
                     key: float(value.detach().cpu())
                     for key, value in pieces.items()
                 }
+                if (
+                    self.config.diagnostic_inner_interval is not None
+                    and (
+                        inner_index % self.config.diagnostic_inner_interval == 0
+                        or inner_index == self.config.inner_steps - 1
+                    )
+                ):
+                    inner_residual_norm = residuals.reshape(residuals.shape[0], -1).norm(dim=1).mean()
+                    print(
+                        f"[alm outer {outer_index} inner {inner_index}] "
+                        f"video={diagnostics['video_loss']:.6f} "
+                        f"goal={diagnostics['goal_loss']:.6f} "
+                        f"action={diagnostics['action_loss']:.6f} "
+                        f"residual={float(inner_residual_norm.cpu()):.6f} "
+                        f"rho={rho:.6f}"
+                    )
 
             with torch.no_grad():
                 multipliers = multipliers + rho * final_residuals
                 rho = min(rho * self.config.rho_growth, self.config.rho_max)
+                if self.config.diagnostic_outer:
+                    outer_residual_norm = final_residuals.reshape(final_residuals.shape[0], -1).norm(dim=1).mean()
+                    print(
+                        f"[alm outer {outer_index} done] "
+                        f"video={diagnostics['video_loss']:.6f} "
+                        f"goal={diagnostics['goal_loss']:.6f} "
+                        f"action={diagnostics['action_loss']:.6f} "
+                        f"residual={float(outer_residual_norm.cpu()):.6f} "
+                        f"next_rho={rho:.6f}"
+                    )
 
         final_actions = self._actions_from_parameter(action_parameter).detach()
         if latent_parameter is None:

@@ -78,6 +78,28 @@ class DinoWorldModelAdapter(WorldModelAdapter):
             return full_state[:, :, :-1, :]
         return full_state[:, :, :, :-self.world_model.action_dim]
 
+    def _visual_slice(self, latent: torch.Tensor) -> torch.Tensor:
+        if self.world_model.concat_dim == 0:
+            return latent[:-1]
+        visual_dim = int(self.world_model.encoder.emb_dim)
+        return latent[..., :visual_dim]
+
+    def _copy_current_nonvisual_state(
+        self,
+        current_latent: torch.Tensor,
+        video_latents: torch.Tensor,
+    ) -> torch.Tensor:
+        latents = video_latents.clone()
+        if self.world_model.concat_dim == 0:
+            latents[:, -1, :] = current_latent[-1].unsqueeze(0).expand(latents.shape[0], -1)
+        else:
+            visual_dim = int(self.world_model.encoder.emb_dim)
+            latents[..., visual_dim:] = current_latent[..., visual_dim:].unsqueeze(0).expand(
+                latents.shape[0], *current_latent[..., visual_dim:].shape
+            )
+        latents[0] = current_latent
+        return latents
+
     def encode_observation(self, observation: Any) -> torch.Tensor:
         prepared = self._prepare_observation(observation)
         with torch.no_grad():
@@ -104,6 +126,33 @@ class DinoWorldModelAdapter(WorldModelAdapter):
         predicted = self.world_model.predict(conditioned)
         obs_only = self._strip_action_conditioning(predicted)
         return obs_only[0, -1]
+
+    def initialize_latents_from_video(
+        self,
+        current_latent: torch.Tensor,
+        video_latents: torch.Tensor,
+    ) -> torch.Tensor:
+        return self._copy_current_nonvisual_state(current_latent, video_latents)
+
+    def video_alignment_loss(
+        self,
+        latent: torch.Tensor,
+        reference: torch.Tensor,
+    ) -> torch.Tensor:
+        return super().video_alignment_loss(
+            self._visual_slice(latent),
+            self._visual_slice(reference),
+        )
+
+    def goal_loss(
+        self,
+        latent: torch.Tensor,
+        goal_latent: torch.Tensor,
+    ) -> torch.Tensor:
+        return super().goal_loss(
+            self._visual_slice(latent),
+            self._visual_slice(goal_latent),
+        )
 
     def rollout(
         self,

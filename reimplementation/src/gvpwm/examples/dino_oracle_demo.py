@@ -74,7 +74,12 @@ def load_model_once(device):
     return model, model_cfg
 
 
-def build_planner(world_model: DinoWorldModelAdapter, horizon: int) -> GVPWMPlanner:
+def build_planner(
+    world_model: DinoWorldModelAdapter,
+    horizon: int,
+    diagnostic_inner_interval: int | None = None,
+    diagnostic_outer: bool = False,
+) -> GVPWMPlanner:
     lambda_action = 0.05 if horizon == 25 else 0.1
     return GVPWMPlanner(
         world_model=world_model,
@@ -93,6 +98,8 @@ def build_planner(world_model: DinoWorldModelAdapter, horizon: int) -> GVPWMPlan
                 use_video_loss=True,
                 fix_states_to_video=False,
                 use_action_reparameterization=True,
+                diagnostic_inner_interval=diagnostic_inner_interval,
+                diagnostic_outer=diagnostic_outer,
             ),
             mpc=MPCConfig(
                 horizon=horizon,
@@ -119,6 +126,8 @@ def evaluate_episode(
     episode_idx: int,
     split: str,
     horizon: int,
+    diagnostic_inner_interval: int | None = None,
+    diagnostic_outer: bool = False,
     model=None,
     model_cfg=None,
     device=None,
@@ -164,7 +173,12 @@ def evaluate_episode(
         action_low=action_low,
         action_high=action_high,
     )
-    planner = build_planner(world_model=world_model, horizon=horizon)
+    planner = build_planner(
+        world_model=world_model,
+        horizon=horizon,
+        diagnostic_inner_interval=diagnostic_inner_interval,
+        diagnostic_outer=diagnostic_outer,
+    )
 
     print(
         f"starting ALM planner "
@@ -243,6 +257,8 @@ def parse_args():
     parser.add_argument("--horizon", type=int, choices=(25, 50, 80), default=DEFAULT_HORIZON, help="Planning horizon")
     parser.add_argument("--start-index", type=int, default=0, help="Start offset inside the filtered eligible episode list")
     parser.add_argument("--num-episodes", type=int, default=DEFAULT_NUM_EPISODES, help="Number of filtered episodes to evaluate")
+    parser.add_argument("--debug-inner-every", type=int, default=None, help="Print ALM diagnostics every N inner iterations")
+    parser.add_argument("--debug-outer", action="store_true", help="Print diagnostics after every ALM outer iteration")
     return parser.parse_args()
 
 
@@ -268,6 +284,8 @@ def main():
                     episode_idx=idx,
                     split=args.split,
                     horizon=args.horizon,
+                    diagnostic_inner_interval=args.debug_inner_every,
+                    diagnostic_outer=args.debug_outer,
                     model=model,
                     model_cfg=model_cfg,
                     device=device,
