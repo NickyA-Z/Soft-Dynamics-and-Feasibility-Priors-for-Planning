@@ -4,11 +4,11 @@ from typing import Any, Callable
 
 import torch
 
-from .config import PlannerConfig
+from .config import ALMConfig, FeasibilityConfig, LangevinALMConfig, PlannerConfig, SolverConfig
 from .feasibility_model.model import FeasibilityModel
 from .interfaces import MPCResult, MPCStepResult, VideoPlan, VideoPlanSource, WorldModelAdapter
 from .losses import goal_mse
-from .solver import LatentCollocationSolver
+from .solver import ALMSolver, FeasibilitySolver, LangevinALMSolver, LatentCollocationSolver
 from .utils import ensure_history_length, shift_action_warm_start, shift_latent_warm_start
 from .video import temporal_resample_sequence
 
@@ -20,19 +20,19 @@ class GVPWMPlanner:
         config: PlannerConfig,
         feasibility_model: FeasibilityModel | None = None,
     ) -> None:
-        if config.feasibility.enabled and feasibility_model is None:
-            raise ValueError("Feasibility model must be provided if feasibility is enabled.")
-
         self.world_model = world_model
         self.config = config
         self.feasibility_model = feasibility_model
-        self.solver = LatentCollocationSolver(
-            world_model=world_model,
-            config=config.solver,
-            config_alm=config.alm,
-            config_feasibility=config.feasibility,
-            feasibility_model=feasibility_model,
-        )
+        self.solver = self._build_solver(config.solver)
+
+    def _build_solver(self, config: SolverConfig) -> LatentCollocationSolver:
+        if isinstance(config, LangevinALMConfig):
+            return LangevinALMSolver(self.world_model, config, self.feasibility_model)
+        if isinstance(config, ALMConfig):
+            return ALMSolver(self.world_model, config, self.feasibility_model)
+        if isinstance(config, FeasibilityConfig):
+            return FeasibilitySolver(self.world_model, config, self.feasibility_model)
+        raise ValueError(f"Unknown solver config type: {type(config)}")
 
     def _encode_video(self, video_plan: VideoPlan, horizon: int) -> torch.Tensor:
         if video_plan.encoded:

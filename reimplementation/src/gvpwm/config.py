@@ -1,10 +1,9 @@
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, TypeAlias, Union
 
 
 @dataclass
-class SolverConfig:
-    inner_steps: int = 25
+class BaseSolverConfig:
     learning_rate: float = 3e-2
     clip_grad_norm: Optional[float] = 10.0
     adam_eps: float = 1e-8
@@ -18,8 +17,8 @@ class SolverConfig:
 
 
 @dataclass
-class ALMConfig:
-    enabled: bool = True
+class ALMConfig(BaseSolverConfig):
+    inner_steps: int = 25
     outer_steps: int = 25
     rho_init: float = 1.0
     rho_growth: float = 1.9
@@ -27,14 +26,20 @@ class ALMConfig:
 
 
 @dataclass
-class FeasibilityConfig:
-    enabled: bool = True
+class FeasibilityConfig(BaseSolverConfig):
     lambda_feasibility: float = 1.0
+    steps: int = 25
     # Model Architecture
     hidden_dim: int = 256
     num_layers: int = 3
     use_layer_norm: bool = False
     noise_level: float = 0.1
+
+
+@dataclass
+class LangevinALMConfig(ALMConfig, FeasibilityConfig):
+    langevin_steps: int = 25
+    langevin_step_size: float = 0.01
 
 
 @dataclass
@@ -51,10 +56,11 @@ class MPCConfig:
     warm_start: bool = True
 
 
+SolverConfig: TypeAlias = Union[ALMConfig, FeasibilityConfig, LangevinALMConfig]
+
+
 @dataclass
 class PlannerConfig:
-    solver: SolverConfig = field(default_factory=SolverConfig)
-    alm: ALMConfig = field(default_factory=ALMConfig)
+    solver: SolverConfig = field(default_factory=ALMConfig)
     mpc: MPCConfig = field(default_factory=MPCConfig)
     refinement: RefinementConfig = field(default_factory=RefinementConfig)
-    feasibility: FeasibilityConfig = field(default_factory=FeasibilityConfig)
