@@ -274,8 +274,7 @@ class LatentCollocationSolver(ABC):
         video_latents: torch.Tensor,
         warm_start_latents: torch.Tensor | None = None,
         warm_start_actions: torch.Tensor | None = None,
-    ) -> CollocationResult:
-        raise ValueError(f"Unknown config type: {type(self.config)}")
+    ) -> CollocationResult: ...
 
 
 class ALMSolver(LatentCollocationSolver):
