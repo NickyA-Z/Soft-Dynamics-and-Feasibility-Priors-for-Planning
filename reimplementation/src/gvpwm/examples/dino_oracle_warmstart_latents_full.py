@@ -237,10 +237,23 @@ def main():
     split_dir = DATA_ROOT / args.split
     eligible = candidate_episodes(split_dir, horizon=args.horizon, frame_skip=FRAME_SKIP)
     eval_episodes = eligible[args.start_index : args.start_index + args.num_episodes]
+    min_required_length = args.horizon * FRAME_SKIP + 1
 
     print(f"Evaluating split={args.split} horizon={args.horizon}")
     print(f"Eligible episodes: {len(eligible)}")
     print(f"Selected episode ids: {eval_episodes}")
+
+    if not eligible:
+        raise ValueError(
+            f"No eligible episodes found for split={args.split}, horizon={args.horizon}. "
+            f"Current filter requires seq_length >= {min_required_length} "
+            f"(horizon * frame_skip + 1, frame_skip={FRAME_SKIP})."
+        )
+    if not eval_episodes:
+        raise ValueError(
+            f"No episodes selected after applying start-index={args.start_index} "
+            f"and num-episodes={args.num_episodes}. Eligible count={len(eligible)}."
+        )
 
     results = []
     for idx in eval_episodes:
