@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable
+from unittest import result
 
 import torch
 
@@ -52,7 +53,7 @@ class GVPWMPlanner:
                 past_action_context=past_action_context,
                 planned_actions=candidate,
             )
-            terminal_cost = goal_mse(rollout[-1], goal_latent)
+            terminal_cost = self.world_model.goal_loss(rollout[-1], goal_latent)
             if best_cost is None or terminal_cost < best_cost:
                 best_cost = terminal_cost
                 best_actions = candidate
@@ -150,16 +151,28 @@ class GVPWMPlanner:
                 warm_start_latents=warm_start_latents,
                 warm_start_actions=warm_start_actions,
             )
-            ##########DEBUG##########
-            if time_index % 10 == 0 or remaining == 1:
-                print(f"[mpc step {time_index}] solver diagnostics: {result.diagnostics}(planner DEBUG)")
-            #########################
             planned_actions = self._refine_actions(
                 latent_context=latent_context,
                 past_action_context=past_action_history,
                 goal_latent=goal_latent,
                 actions=result.actions,
             )
+
+            ##########DEBUG##########
+            if time_index % 10 == 0 or remaining == 1:
+                print(f"[mpc step {time_index}] solver diagnostics: {result.diagnostics}(planner DEBUG)")
+
+            raw_first = result.actions[0].detach().cpu()
+            ref_first = planned_actions[0].detach().cpu()
+
+            print(
+                f"[refine check {time_index}] "
+                f"raw_norm_sum=({raw_first[0::2].sum():.3f},{raw_first[1::2].sum():.3f}) "
+                f"ref_norm_sum=({ref_first[0::2].sum():.3f},{ref_first[1::2].sum():.3f}) "
+                f"delta_norm={float((ref_first - raw_first).norm()):.4f}"
+            )
+            #########################
+            
             n_exec = min(self.config.mpc.execution_stride, remaining)
             executed_this_round = planned_actions[:n_exec]
 

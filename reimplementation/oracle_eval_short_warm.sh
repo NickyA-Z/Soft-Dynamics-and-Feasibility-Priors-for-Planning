@@ -1,9 +1,9 @@
 #!/bin/bash
-#SBATCH --partition=gpu_a100
+#SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --job-name=gvpwm_short_warm
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=18
+#SBATCH --cpus-per-task=16
 #SBATCH --time=00:20:00
 #SBATCH --output=oracle_eval_short_warm_%j.out
 

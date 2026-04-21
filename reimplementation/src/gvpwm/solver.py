@@ -129,6 +129,7 @@ class LatentCollocationSolver:
                 )
         goal_loss = self.world_model.goal_loss(latents[-1], goal_latent)
         action_loss = actions.pow(2).sum()
+        #action_loss = actions.pow(2).sum(dim=-1).mean()
         objective = (
             self.config.lambda_video * video_loss
             + self.config.lambda_goal * goal_loss

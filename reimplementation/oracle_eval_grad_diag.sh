@@ -1,9 +1,8 @@
 #!/bin/bash
-#SBATCH --partition=gpu_a100
+#SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --job-name=gvpwm_grad_diag
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=18
 #SBATCH --time=00:15:00
 #SBATCH --output=oracle_eval_grad_diag_%j.out
 

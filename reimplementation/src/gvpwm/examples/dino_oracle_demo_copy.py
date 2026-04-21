@@ -16,14 +16,17 @@ from ..planner import GVPWMPlanner
 from ..video import PrecomputedVideoPlanSource
 from .dino_oracle_utils import load_oracle_episode, slice_oracle_episode
 
+import torch.nn.functional as F
+from ..losses import scale_invariant_alignment
+
+
 
 DINO_WM_ROOT = Path("/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm")
 if str(DINO_WM_ROOT) not in sys.path:
     sys.path.append(str(DINO_WM_ROOT))
 
 from plan import load_model
-from datasets.pusht_dset import ACTION_MEAN, ACTION_STD
-
+from datasets.pusht_dset import ACTION_MEAN, ACTION_STD, PROPRIO_MEAN, PROPRIO_STD
 
 DATA_ROOT = DINO_WM_ROOT / "data" / "pusht_noise"
 MODEL_NAME = "pusht"
@@ -35,9 +38,12 @@ DEFAULT_NUM_EPISODES = 50
 
 
 def to_runtime_observation(obs):
+    proprio = torch.as_tensor(obs["proprio"], dtype=torch.float32)[..., :4]
+    proprio = (proprio - PROPRIO_MEAN[: proprio.shape[-1]]) / PROPRIO_STD[: proprio.shape[-1]]
+
     return {
         "visual": torch.as_tensor(obs["visual"], dtype=torch.float32).permute(2, 0, 1) / 255.0,
-        "proprio": torch.as_tensor(obs["proprio"], dtype=torch.float32)[..., :4],
+        "proprio": proprio,
     }
 
 
@@ -91,8 +97,10 @@ def build_planner(
                 rho_init=1.0,
                 rho_growth=1.9,
                 rho_max=1_000.0,
-                lambda_video=1.0,
+                #lambda_video=1.0
+                lambda_video=10,
                 lambda_goal=10.0,
+                #lambda_action=0,
                 lambda_action=lambda_action,
                 use_video_init=True,
                 use_video_loss=True,
@@ -132,8 +140,39 @@ def _oracle_initialize_latents_from_video(
     latents[0] = current_latent
     return latents
 
+def _proprio_slice(self, latent: torch.Tensor) -> torch.Tensor:
+    if self.world_model.concat_dim == 0:
+        return latent[-1]
+    visual_dim = int(self.world_model.encoder.emb_dim)
+    return latent[..., visual_dim:]
+
+
+
+_debug_align_counter = {"n": 0}
+    
 def _oracle_video_alignment_loss(self, latent, reference):
-    return super(DinoWorldModelAdapter, self).video_alignment_loss(latent, reference)
+    visual_loss = scale_invariant_alignment(
+        self._visual_slice(latent),
+        self._visual_slice(reference),
+    )
+
+    proprio_loss = F.mse_loss(
+        _proprio_slice(self, latent),
+        _proprio_slice(self, reference),
+        reduction="mean",
+    )
+
+    #if _debug_align_counter["n"] % 500 == 0:
+    #    print(
+    #        f"[video align] visual={visual_loss.item():.4f} "
+    #        f"proprio={proprio_loss.item():.4f} "
+    #        f"weighted_proprio={(10.0 * proprio_loss).item():.4f}"
+    #    )
+
+    #_debug_align_counter["n"] += 1
+
+    #return visual_loss + 10.0 * proprio_loss
+    return visual_loss
 
 def _oracle_goal_loss(self, latent, goal_latent):
     return super(DinoWorldModelAdapter, self).goal_loss(latent, goal_latent)
@@ -186,7 +225,7 @@ def evaluate_episode(
 
     DinoWorldModelAdapter.initialize_latents_from_video = _oracle_initialize_latents_from_video
     DinoWorldModelAdapter.video_alignment_loss = _oracle_video_alignment_loss
-    DinoWorldModelAdapter.goal_loss = _oracle_goal_loss
+    #DinoWorldModelAdapter.goal_loss = _oracle_goal_loss
 
     world_model = DinoWorldModelAdapter(
         world_model=model,
@@ -205,17 +244,168 @@ def evaluate_episode(
         f"starting ALM planner "
         f"(split={split}, horizon={horizon}, I=25, O=25, gamma=1.9, refinement=500x0.3)"
     )
-    result = planner.run_mpc(
-        observation_history=[episode["start_obs"]],
-        goal_observation=episode["goal_obs"],
-        step_fn=lambda action: step_env(
+    
+    
+    # for debug purpose
+    goal_state_for_trace = np.concatenate(
+        [
+            episode["states"][-1].detach().cpu().numpy(),
+            episode["velocities"][-1].detach().cpu().numpy(),
+        ],
+        axis=0,
+    )
+    trace_counter = {"step": 0}
+
+    def traced_step_fn(action):
+        
+        action_np = action.detach().cpu().numpy().reshape(action_repeat, primitive_action_dim)
+        primitive_actions = (
+            action_np * action_std.detach().cpu().numpy()
+        ) + action_mean.detach().cpu().numpy()
+
+        planner_macro_disp_px = primitive_actions.sum(axis=0) * 100.0
+
+        expert_start = trace_counter["step"] * FRAME_SKIP
+        expert_end = expert_start + FRAME_SKIP
+        expert_macro_disp_px = (
+            episode["rel_actions"][expert_start:expert_end]
+            .detach()
+            .cpu()
+            .numpy()
+            .sum(axis=0)
+        )
+
+        macro_disp_px = primitive_actions.sum(axis=0) * 100.0
+
+        agent_pos_before = np.array(
+            [
+                env.unwrapped.agent.position[0],
+                env.unwrapped.agent.position[1],
+            ],
+            dtype=np.float32,
+        )
+        block_pos_before = np.array(
+            [
+                env.unwrapped.block.position[0],
+                env.unwrapped.block.position[1],
+            ],
+            dtype=np.float32,
+        )
+
+        to_block = block_pos_before - agent_pos_before
+        agent_block_dist = np.linalg.norm(to_block)
+
+        print(
+            f"[action trace {trace_counter['step']}] "
+            f"macro_disp_px=({macro_disp_px[0]:.1f},{macro_disp_px[1]:.1f}) "
+            f"planner_macro_px=({planner_macro_disp_px[0]:.1f},{planner_macro_disp_px[1]:.1f}) "
+            f"expert_macro_px=({expert_macro_disp_px[0]:.1f},{expert_macro_disp_px[1]:.1f}) "
+            f"to_block=({to_block[0]:.1f},{to_block[1]:.1f}) "
+            f"agent_block_dist={agent_block_dist:.1f}"
+        )
+        agent_vel = np.array(
+            [env.unwrapped.agent.velocity[0], env.unwrapped.agent.velocity[1]],
+            dtype=np.float32,
+        )
+        print(f"vel=({agent_vel[0]:.1f},{agent_vel[1]:.1f})")
+
+
+        t = trace_counter["step"]
+        raw0 = t * FRAME_SKIP
+        raw1 = raw0 + FRAME_SKIP
+
+        oracle_now = episode["states"][raw0]
+        oracle_next = episode["states"][raw1]
+
+        oracle_agent_disp = oracle_next[:2] - oracle_now[:2]
+        oracle_block_disp = oracle_next[2:4] - oracle_now[2:4]
+        oracle_angle_disp = oracle_next[4] - oracle_now[4]
+
+        expert_macro_raw = episode["rel_actions"][raw0:raw1].float()
+        expert_macro_disp = expert_macro_raw.sum(dim=0)
+
+        planner_macro = action.detach().cpu().reshape(action_repeat, primitive_action_dim)
+        planner_macro_raw = ((planner_macro * action_std.cpu()) + action_mean.cpu()) * 100.0
+        planner_macro_disp = planner_macro_raw.sum(dim=0)
+
+        print(
+            f"[time check {t}] raw_range=[{raw0}:{raw1}] "
+            f"oracle_agent_now=({oracle_now[0]:.1f},{oracle_now[1]:.1f}) "
+            f"oracle_agent_next=({oracle_next[0]:.1f},{oracle_next[1]:.1f}) "
+            f"oracle_agent_disp=({oracle_agent_disp[0]:.1f},{oracle_agent_disp[1]:.1f}) "
+            f"expert_macro_disp=({expert_macro_disp[0]:.1f},{expert_macro_disp[1]:.1f}) "
+            f"planner_macro_disp=({planner_macro_disp[0]:.1f},{planner_macro_disp[1]:.1f}) "
+            f"oracle_block_disp=({oracle_block_disp[0]:.1f},{oracle_block_disp[1]:.1f}) "
+            f"oracle_angle_disp={oracle_angle_disp:.3f}"
+        )
+
+
+
+        obs = step_env(
             env,
             action,
             action_repeat=action_repeat,
             primitive_action_dim=primitive_action_dim,
             action_mean=action_mean,
             action_std=action_std,
-        ),
+        )
+        
+        cur_state_mid = np.array(
+            [
+                env.unwrapped.agent.position[0],
+                env.unwrapped.agent.position[1],
+                env.unwrapped.block.position[0],
+                env.unwrapped.block.position[1],
+                env.unwrapped.block.angle,
+                env.unwrapped.agent.velocity[0],
+                env.unwrapped.agent.velocity[1],
+            ],
+            dtype=np.float32,
+        )
+
+        agent_diff = np.linalg.norm(goal_state_for_trace[:2] - cur_state_mid[:2])
+        block_diff = np.linalg.norm(goal_state_for_trace[2:4] - cur_state_mid[2:4])
+        pos_diff = np.linalg.norm(goal_state_for_trace[:4] - cur_state_mid[:4])
+        angle_diff = np.abs(goal_state_for_trace[4] - cur_state_mid[4])
+        angle_diff = np.minimum(angle_diff, 2 * np.pi - angle_diff)
+
+        
+        print(f"goal_block=({goal_state_for_trace[2]:.1f},{goal_state_for_trace[3]:.1f},{goal_state_for_trace[4]:.3f}) ")
+        print(
+            f"[env step {trace_counter['step']}] "
+            f"agent=({cur_state_mid[0]:.1f},{cur_state_mid[1]:.1f}) "
+            f"block=({cur_state_mid[2]:.1f},{cur_state_mid[3]:.1f}) "
+            f"angle={cur_state_mid[4]:.3f} "
+            f"agent_diff={agent_diff:.1f} "
+            f"block_diff={block_diff:.1f} "
+            f"pos_diff={pos_diff:.1f} "
+            f"angle_diff={angle_diff:.3f}"
+        )
+        
+        oracle_idx = min(trace_counter["step"] * FRAME_SKIP, episode["states"].shape[0] - 1)
+        oracle_state_mid = episode["states"][oracle_idx].detach().cpu().numpy()
+
+        print(
+            f"oracle_t_agent=({oracle_state_mid[0]:.1f},{oracle_state_mid[1]:.1f}) "
+            f"oracle_t_block=({oracle_state_mid[2]:.1f},{oracle_state_mid[3]:.1f}) "
+            f"oracle_t_angle={oracle_state_mid[4]:.3f} "
+        )
+
+
+        trace_counter["step"] += 1
+        return obs
+    
+    print("video_plan length:", len(episode["video_plan"]))
+    print("expected macro video length:", horizon + 1)
+    print("states length:", episode["states"].shape[0])
+    print("rel_actions length:", episode["rel_actions"].shape[0])
+    print("frame_skip:", FRAME_SKIP)
+    
+    
+    result = planner.run_mpc(
+        observation_history=[episode["start_obs"]],
+        goal_observation=episode["goal_obs"],
+        step_fn=traced_step_fn,
         video_source=PrecomputedVideoPlanSource(episode["video_plan"], encoded=False),
     )
     print("ALM planner finished")

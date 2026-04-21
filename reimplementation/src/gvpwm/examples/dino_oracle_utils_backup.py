@@ -7,12 +7,6 @@ from typing import Any
 import imageio.v3 as iio
 import torch
 
-import sys
-
-DINO_WM_ROOT = Path("/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm")
-if str(DINO_WM_ROOT) not in sys.path:
-    sys.path.append(str(DINO_WM_ROOT))
-
 from datasets.pusht_dset import PROPRIO_MEAN, PROPRIO_STD
 
 def make_observation(frame, proprio):
@@ -54,9 +48,7 @@ def load_oracle_episode(base_dir: str | Path, episode_idx: int) -> dict[str, Any
         )
 
     episode_states = states[episode_idx, :length]
-    episode_velocities = velocities[episode_idx, :length]
-    episode_proprio_raw = torch.cat([episode_states[..., :2], episode_velocities], dim=-1)
-    episode_proprio = (episode_proprio_raw.float() - PROPRIO_MEAN[:4]) / PROPRIO_STD[:4]
+    episode_proprio = episode_states[..., :4]
     episode_actions = abs_actions[episode_idx, : max(length - 1, 0)]
     episode_rel_actions = rel_actions[episode_idx, : max(length - 1, 0)]
     episode_velocities = velocities[episode_idx, :length]
@@ -92,13 +84,9 @@ def slice_oracle_episode(
         )
 
     effective_length = required_frames
-    macro_indices = list(range(0, effective_length, frame_skip))
-
     truncated = dict(episode)
     full_video_plan = episode["video_plan"][:effective_length]
-    macro_video_plan = [full_video_plan[i] for i in macro_indices]
-    
-    truncated["video_plan"] = macro_video_plan
+    truncated["video_plan"] = [make_visual_only_observation(obs) for obs in full_video_plan]
     truncated["start_obs"] = full_video_plan[0]
     truncated["goal_obs"] = make_visual_only_observation(full_video_plan[-1])
     truncated["actions"] = episode["actions"][: horizon * frame_skip]

@@ -1,9 +1,8 @@
 #!/bin/bash
-#SBATCH --partition=gpu_a100
+#SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --job-name=gvpwm_rho_scan
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=18
 #SBATCH --time=01:00:00
 #SBATCH --output=oracle_eval_rho_scan_%j.out
 

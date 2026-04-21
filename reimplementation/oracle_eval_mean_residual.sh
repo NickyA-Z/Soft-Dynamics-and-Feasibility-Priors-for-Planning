@@ -1,9 +1,8 @@
 #!/bin/bash
-#SBATCH --partition=gpu_a100
+#SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --job-name=gvpwm_mean_resid
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=18
 #SBATCH --time=00:30:00
 #SBATCH --output=oracle_eval_mean_residual_%j.out
 

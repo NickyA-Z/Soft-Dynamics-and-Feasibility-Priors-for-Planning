@@ -1,9 +1,9 @@
 #!/bin/bash
-#SBATCH --partition=gpu_a100
+#SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --job-name=gvpwm_fix_adapter
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=18
+#SBATCH --cpus-per-task=16
 #SBATCH --time=00:30:00
 #SBATCH --output=oracle_eval_fix_adapter_%j.out
 
