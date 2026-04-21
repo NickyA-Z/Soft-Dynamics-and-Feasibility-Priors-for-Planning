@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --partition=gpu_a100
 #SBATCH --gpus=1
-#SBATCH --job-name=oracle_test
+#SBATCH --job-name=toy_demo
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --time=1:00:00
-#SBATCH --output=oracle_test.out
+#SBATCH --output=toy_demo.out
 
 module purge
 module load 2025

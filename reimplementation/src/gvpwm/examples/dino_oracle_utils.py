@@ -21,10 +21,8 @@ def load_oracle_episode(base_dir: str | Path, episode_idx: int) -> dict[str, Any
     base = Path(base_dir)
 
     abs_actions = torch.load(base / "abs_actions.pth")
-    rel_actions = torch.load(base / "rel_actions.pth")
     states = torch.load(base / "states.pth")
     velocities = torch.load(base / "velocities.pth")
-    
     with open(base / "seq_lengths.pkl", "rb") as handle:
         seq_lengths = pickle.load(handle)
 
@@ -43,7 +41,6 @@ def load_oracle_episode(base_dir: str | Path, episode_idx: int) -> dict[str, Any
     episode_states = states[episode_idx, :length]
     episode_proprio = episode_states[..., :4]
     episode_actions = abs_actions[episode_idx, : max(length - 1, 0)]
-    episode_rel_actions = rel_actions[episode_idx, : max(length - 1, 0)]
     episode_velocities = velocities[episode_idx, :length]
 
     video_plan = [
@@ -56,42 +53,11 @@ def load_oracle_episode(base_dir: str | Path, episode_idx: int) -> dict[str, Any
         "start_obs": video_plan[0],
         "goal_obs": video_plan[-1],
         "actions": episode_actions,
-        "rel_actions": episode_rel_actions,
         "states": episode_states,
         "proprio": episode_proprio,
         "velocities": episode_velocities,
         "length": length,
     }
-
-
-def slice_oracle_episode(
-    episode: dict[str, Any],
-    horizon: int,
-    frame_skip: int,
-) -> dict[str, Any]:
-    required_frames = horizon * frame_skip + 1
-    if episode["length"] < required_frames:
-        raise ValueError(
-            f"Episode length {episode['length']} is too short for horizon={horizon} "
-            f"with frame_skip={frame_skip} (need {required_frames} frames)."
-        )
-
-    effective_length = required_frames
-    truncated = dict(episode)
-    truncated["video_plan"] = episode["video_plan"][:effective_length]
-    truncated["start_obs"] = truncated["video_plan"][0]
-    truncated["goal_obs"] = {
-        "visual": truncated["video_plan"][-1]["visual"],
-    }
-    truncated["actions"] = episode["actions"][: horizon * frame_skip]
-    truncated["rel_actions"] = episode["rel_actions"][: horizon * frame_skip]
-    truncated["states"] = episode["states"][:effective_length]
-    truncated["proprio"] = episode["proprio"][:effective_length]
-    truncated["velocities"] = episode["velocities"][:effective_length]
-    truncated["length"] = effective_length
-    truncated["planning_horizon"] = horizon
-    truncated["frame_skip"] = frame_skip
-    return truncated
 
 
 def infer_horizon(

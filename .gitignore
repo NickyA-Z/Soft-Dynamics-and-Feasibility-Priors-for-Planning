@@ -39,5 +39,3 @@ venv/
 # IDE
 .vscode/
 .idea/
-.claude/
-.codex
