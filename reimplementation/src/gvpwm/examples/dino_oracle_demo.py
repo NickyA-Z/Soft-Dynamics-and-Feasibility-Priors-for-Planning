@@ -4,22 +4,24 @@ import sys
 from pathlib import Path
 
 import gym
-import numpy as np
 import torch
+import numpy as np
 from omegaconf import OmegaConf
 
 from ..adapters.dino_wm import DinoWorldModelAdapter
-from ..config import ALMConfig, MPCConfig, PlannerConfig, RefinementConfig
+from ..config import ALMConfig, FeasibilityConfig, MPCConfig, PlannerConfig, RefinementConfig, SolverConfig
 from ..planner import GVPWMPlanner
 from ..video import PrecomputedVideoPlanSource
 from .dino_oracle_utils import infer_horizon, load_oracle_episode
+
 
 DINO_WM_ROOT = Path("/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm")
 if str(DINO_WM_ROOT) not in sys.path:
     sys.path.append(str(DINO_WM_ROOT))
 
-from datasets.pusht_dset import ACTION_MEAN, ACTION_STD
 from plan import load_model
+from datasets.pusht_dset import ACTION_MEAN, ACTION_STD
+
 
 DATA_DIR = DINO_WM_ROOT / "data" / "pusht_noise" / "train"
 MODEL_NAME = "pusht"
@@ -170,9 +172,8 @@ def evaluate_episode(episode_idx: int) -> dict:
     planner = GVPWMPlanner(
         world_model=world_model,
         config=PlannerConfig(
-            solver=ALMConfig(
+            solver=SolverConfig(
             inner_steps=5,
-            outer_steps=2,
             learning_rate=0.05,
             lambda_video=1.0,
             lambda_goal=10.0,
@@ -180,12 +181,16 @@ def evaluate_episode(episode_idx: int) -> dict:
             use_video_init=True,
             use_video_loss=True,
             fix_states_to_video=False,
+        ),
+            alm=ALMConfig(
+            outer_steps=2,
             rho_init=1.0,
             rho_growth=1.5,
             rho_max=50.0,
         ),
         mpc=MPCConfig(horizon=horizon, execution_stride=1, warm_start=True),
         refinement=RefinementConfig(enabled=True, num_samples=32, noise_std=0.3),
+        feasibility=FeasibilityConfig(enabled=False),
         ),
     )
 

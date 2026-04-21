@@ -1,5 +1,5 @@
 import torch
-from gvpwm.config import ALMConfig, MPCConfig, PlannerConfig, RefinementConfig
+from gvpwm.config import ALMConfig, FeasibilityConfig, MPCConfig, PlannerConfig, RefinementConfig, SolverConfig
 from gvpwm.examples.toy_world import ToyLinearWorldModel, ToyPointMassEnv, make_infeasible_video_plan
 from gvpwm.planner import GVPWMPlanner
 from gvpwm.video import PrecomputedVideoPlanSource
@@ -9,19 +9,22 @@ def make_planner(horizon: int) -> GVPWMPlanner:
     return GVPWMPlanner(
         world_model=ToyLinearWorldModel(action_limit=0.15),
         config=PlannerConfig(
-            solver=ALMConfig(
+            solver=SolverConfig(
                 inner_steps=60,
-                outer_steps=8,
                 learning_rate=0.08,
                 lambda_video=0.5,
                 lambda_goal=25.0,
                 lambda_action=0.1,
+            ),
+            alm=ALMConfig(
+                outer_steps=8,
                 rho_init=1.0,
                 rho_growth=1.5,
                 rho_max=250.0,
             ),
             mpc=MPCConfig(horizon=horizon, execution_stride=1, warm_start=True),
             refinement=RefinementConfig(enabled=True, num_samples=32, noise_std=0.02),
+            feasibility=FeasibilityConfig(enabled=False),
         ),
     )
 
