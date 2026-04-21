@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional, Union
+from typing import Optional, TypeAlias, Union
 
 
 @dataclass
@@ -56,8 +56,7 @@ class MPCConfig:
     warm_start: bool = True
 
 
-# TypeAlias introduced in Python 3.10
-SolverConfig = Union[ALMConfig, FeasibilityConfig, LangevinALMConfig]
+SolverConfig: TypeAlias = Union[ALMConfig, FeasibilityConfig, LangevinALMConfig]
 
 
 @dataclass
