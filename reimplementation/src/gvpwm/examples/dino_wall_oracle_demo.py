@@ -103,6 +103,31 @@ def build_planner(
 ) -> GVPWMPlanner:
     lambda_action = 0.05 if horizon == 25 else 0.1
     rho_growth = 1.5 if horizon == 25 else 1.9
+    
+    
+    
+    """
+            alm=ALMConfig(
+                inner_steps=25,
+                outer_steps=25,
+                learning_rate=0.05,
+                rho_init=1.0,
+                rho_growth=rho_growth,
+                rho_max=1_000.0,
+                lambda_video=1.0,
+                lambda_goal=10.0,
+                lambda_action=lambda_action,
+                use_video_init=True,
+                use_video_loss=True,
+                fix_states_to_video=False,
+                use_action_reparameterization=True,
+                diagnostic_inner_interval=diagnostic_inner_interval,
+                diagnostic_outer=diagnostic_outer,
+                residual_reduction="mean",
+            ),
+    """
+    
+    
     return GVPWMPlanner(
         world_model=world_model,
         config=PlannerConfig(
@@ -151,7 +176,9 @@ def _oracle_initialize_latents_from_video(
 def _prepare_wall_env(env: gym.Env, episode: dict, episode_idx: int) -> None:
     env.unwrapped.update_env(episode["env_info"])
     init_state = episode["states"][0].detach().cpu().numpy()
-    env.unwrapped.prepare(seed=episode_idx, init_state=init_state)
+    env.unwrapped.seed(episode_idx)
+    env.unwrapped.set_init_state(init_state)
+    env.reset()
 
 
 def _current_wall_state(env: gym.Env) -> np.ndarray:

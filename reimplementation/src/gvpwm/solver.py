@@ -163,21 +163,6 @@ class LatentCollocationSolver:
             video_latents=video_latents,
             warm_start_latents=warm_start_latents,
         )
-        
-        ######################debug############################
-        with torch.no_grad():
-            probe_indices = [0, 1, 2, 5, 10, horizon]
-            probe_indices = [i for i in probe_indices if i <= horizon]
-            msg = []
-            for i in probe_indices:
-                loss = self.world_model.video_alignment_loss(
-                    initial_latents[i],
-                    video_latents[i],
-                )
-                msg.append(f"{i}:{float(loss.detach().cpu()):.4f}")
-            print(f"[latent init-vs-video](solver DEBUG) horizon={horizon} " + " ".join(msg))
-        #######################################################
-        
 
         if self.config.fix_states_to_video:
             latent_parameter = None
@@ -296,10 +281,8 @@ class LatentCollocationSolver:
                 }
                 if (
                     self.config.diagnostic_inner_interval is not None
-                    and (
-                        inner_index % self.config.diagnostic_inner_interval == 0
-                        or inner_index == self.config.inner_steps - 1
-                    )
+                    and outer_index == self.config.outer_steps - 1
+                    and inner_index == self.config.inner_steps - 1
                 ):
                     inner_residual_norm = residuals.reshape(residuals.shape[0], -1).norm(dim=1).mean()
                     
@@ -349,21 +332,6 @@ class LatentCollocationSolver:
                 [current_latent.unsqueeze(0), latent_parameter.detach()],
                 dim=0,
             )
-            
-        ##########################debug#########################
-        with torch.no_grad():
-            probe_indices = [0, 1, 2, 5, 10, horizon]
-            probe_indices = [i for i in probe_indices if i <= horizon]
-            msg = []
-            for i in probe_indices:
-                loss = self.world_model.video_alignment_loss(
-                    final_latents[i],
-                    video_latents[i],
-                )
-                msg.append(f"{i}:{float(loss.detach().cpu()):.4f}")
-            print(f"[latent final-vs-video](solver DEBUG) horizon={horizon} " + " ".join(msg))
-
-        ########################################################
             
         residual_norm = final_residuals.reshape(final_residuals.shape[0], -1).norm(dim=1).mean()
         diagnostics.update(

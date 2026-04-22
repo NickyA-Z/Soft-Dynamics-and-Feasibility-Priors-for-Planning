@@ -100,7 +100,7 @@ def slice_oracle_episode(
     
     truncated["video_plan"] = macro_video_plan
     truncated["start_obs"] = full_video_plan[0]
-    truncated["goal_obs"] = make_visual_only_observation(full_video_plan[-1])
+    truncated["goal_obs"] = full_video_plan[-1]
     truncated["actions"] = episode["actions"][: horizon * frame_skip]
     truncated["rel_actions"] = episode["rel_actions"][: horizon * frame_skip]
     truncated["states"] = episode["states"][:effective_length]
