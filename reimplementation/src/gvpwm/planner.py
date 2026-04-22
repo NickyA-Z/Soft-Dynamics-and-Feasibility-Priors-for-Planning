@@ -179,6 +179,22 @@ class GVPWMPlanner:
             for offset in range(n_exec):
                 action = executed_this_round[offset].detach()
                 next_observation = step_fn(action)
+                
+                ###################debug###################
+                next_time_index = time_index + 1
+                next_latent = self.world_model.encode_observation(next_observation).to(self.world_model.device)
+
+                env_ref_loss = self.world_model.video_alignment_loss(
+                    next_latent,
+                    encoded_video[next_time_index],
+                )
+
+                print(
+                    f"[env-ref loss {next_time_index}](planner DEBUG)"
+                    f"{float(env_ref_loss.detach().cpu()):.6f}"
+                )
+                ###########################################
+                
                 next_latent = self.world_model.encode_observation(next_observation).to(self.world_model.device)
                 executed_actions.append(action)
                 executed_latents.append(next_latent)

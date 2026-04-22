@@ -163,6 +163,21 @@ class LatentCollocationSolver:
             video_latents=video_latents,
             warm_start_latents=warm_start_latents,
         )
+        
+        ######################debug############################
+        with torch.no_grad():
+            probe_indices = [0, 1, 2, 5, 10, horizon]
+            probe_indices = [i for i in probe_indices if i <= horizon]
+            msg = []
+            for i in probe_indices:
+                loss = self.world_model.video_alignment_loss(
+                    initial_latents[i],
+                    video_latents[i],
+                )
+                msg.append(f"{i}:{float(loss.detach().cpu()):.4f}")
+            print(f"[latent init-vs-video](solver DEBUG) horizon={horizon} " + " ".join(msg))
+        #######################################################
+        
 
         if self.config.fix_states_to_video:
             latent_parameter = None
@@ -227,9 +242,18 @@ class LatentCollocationSolver:
                     pen_scale = 1.0 / float(residuals[0].numel())
                 else:
                     pen_scale = 1.0
+
+                dual_term = current_latent.new_tensor(0.0)
+                rho_penalty = current_latent.new_tensor(0.0)
+
                 for index in range(residuals.shape[0]):
-                    augmented = augmented + (multipliers[index] * residuals[index]).sum()
-                    augmented = augmented + 0.5 * rho * pen_scale * squared_norm(residuals[index])
+                    dual_piece = (multipliers[index] * residuals[index]).sum()
+                    penalty_piece = 0.5 * rho * pen_scale * squared_norm(residuals[index])
+
+                    augmented = augmented + dual_piece + penalty_piece
+                    dual_term = dual_term + dual_piece
+                    rho_penalty = rho_penalty + penalty_piece
+    
                 augmented.backward()
                 if (
                     self.config.diagnostic_grad_norms
@@ -278,13 +302,25 @@ class LatentCollocationSolver:
                     )
                 ):
                     inner_residual_norm = residuals.reshape(residuals.shape[0], -1).norm(dim=1).mean()
+                    
+                    weighted_video = self.config.lambda_video * pieces["video_loss"]
+                    weighted_goal = self.config.lambda_goal * pieces["goal_loss"]
+                    weighted_action = self.config.lambda_action * pieces["action_loss"]
+
                     print(
                         f"[alm outer {outer_index} inner {inner_index}] "
-                        f"video={diagnostics['video_loss']:.6f} "
-                        f"goal={diagnostics['goal_loss']:.6f} "
-                        f"action={diagnostics['action_loss']:.6f} "
-                        f"residual={float(inner_residual_norm.cpu()):.6f} "
-                        f"rho={rho:.6f}"
+                        f"video={diagnostics['video_loss']:.4f} "
+                        f"goal={diagnostics['goal_loss']:.4f} "
+                        f"action={diagnostics['action_loss']:.2f} "
+                        f"w_video={float(weighted_video.detach().cpu()):.4f} "
+                        f"w_goal={float(weighted_goal.detach().cpu()):.4f} "
+                        f"w_action={float(weighted_action.detach().cpu()):.4f} "
+                        f"obj={float(objective.detach().cpu()):.4f} "
+                        f"dual={float(dual_term.detach().cpu()):.4f} "
+                        f"rho_pen={float(rho_penalty.detach().cpu()):.4f} "
+                        f"aug={float(augmented.detach().cpu()):.4f} "
+                        f"residual={float(inner_residual_norm.detach().cpu()):.4f} "
+                        f"rho={rho:.1f}"
                     )
 
             with torch.no_grad():
@@ -313,6 +349,22 @@ class LatentCollocationSolver:
                 [current_latent.unsqueeze(0), latent_parameter.detach()],
                 dim=0,
             )
+            
+        ##########################debug#########################
+        with torch.no_grad():
+            probe_indices = [0, 1, 2, 5, 10, horizon]
+            probe_indices = [i for i in probe_indices if i <= horizon]
+            msg = []
+            for i in probe_indices:
+                loss = self.world_model.video_alignment_loss(
+                    final_latents[i],
+                    video_latents[i],
+                )
+                msg.append(f"{i}:{float(loss.detach().cpu()):.4f}")
+            print(f"[latent final-vs-video](solver DEBUG) horizon={horizon} " + " ".join(msg))
+
+        ########################################################
+            
         residual_norm = final_residuals.reshape(final_residuals.shape[0], -1).norm(dim=1).mean()
         diagnostics.update(
             {

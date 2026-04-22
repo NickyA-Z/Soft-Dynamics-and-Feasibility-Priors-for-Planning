@@ -97,8 +97,8 @@ def build_planner(
                 rho_init=1.0,
                 rho_growth=1.9,
                 rho_max=1_000.0,
-                #lambda_video=1.0
-                lambda_video=10,
+                lambda_video=1.0,
+                #lambda_video=10,
                 lambda_goal=10.0,
                 #lambda_action=0,
                 lambda_action=lambda_action,
@@ -400,6 +400,54 @@ def evaluate_episode(
     print("states length:", episode["states"].shape[0])
     print("rel_actions length:", episode["rel_actions"].shape[0])
     print("frame_skip:", FRAME_SKIP)
+    
+    
+    
+    # Debug: check whether visual video alignment is sensitive to oracle block motion.
+    debug_macro_indices = [0, 1, 2, 5, 10, 15, 20, 25]
+    debug_macro_indices = [i for i in debug_macro_indices if i < len(episode["video_plan"])]
+
+    with torch.no_grad():
+        debug_obs = [episode["video_plan"][i] for i in debug_macro_indices]
+        encoded_dbg = world_model.encode_sequence(debug_obs).to(device)
+
+        base = encoded_dbg[0]
+        for j, macro_i in enumerate(debug_macro_indices):
+            raw_i = macro_i * FRAME_SKIP
+            st = episode["states"][raw_i]
+
+            visual_loss_from_start = world_model.video_alignment_loss(
+                base,
+                encoded_dbg[j],
+            )
+
+            agent_dist_from_start = torch.linalg.norm(
+                episode["states"][raw_i, :2] - episode["states"][0, :2]
+            )
+            block_dist_from_start = torch.linalg.norm(
+                episode["states"][raw_i, 2:4] - episode["states"][0, 2:4]
+            )
+            angle_diff_from_start = torch.abs(
+                episode["states"][raw_i, 4] - episode["states"][0, 4]
+            )
+            angle_diff_from_start = torch.minimum(
+                angle_diff_from_start,
+                2 * torch.pi - angle_diff_from_start,
+            )
+
+            print(
+                f"[ref sensitivity] macro={macro_i} raw={raw_i} "
+                f"visual_loss_from_start={float(visual_loss_from_start.detach().cpu()):.6f} "
+                f"agent_dist={float(agent_dist_from_start.cpu()):.1f} "
+                f"block_dist={float(block_dist_from_start.cpu()):.1f} "
+                f"angle_diff={float(angle_diff_from_start.cpu()):.3f} "
+                f"agent=({st[0]:.1f},{st[1]:.1f}) "
+                f"block=({st[2]:.1f},{st[3]:.1f}) "
+                f"angle={st[4]:.3f}"
+            )
+    ################################################################
+
+    
     
     
     result = planner.run_mpc(
