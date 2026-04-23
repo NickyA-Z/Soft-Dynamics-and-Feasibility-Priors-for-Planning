@@ -1,0 +1,239 @@
+============================================================================================== 
+Warning! Mixing Conda and module environments may lead to corruption of the
+user environment. 
+We do not recommend users mixing those two environments unless absolutely
+necessary. Note that 
+SURF does not provide any support for Conda environment.
+For more information, please refer to our software policy page:
+https://servicedesk.surf.nl/wiki/display/WIKI/Software+policy+Snellius#SoftwarepolicySnellius-UseofAnacondaandMinicondaenvironmentsonSnellius 
+
+Remember that many packages have already been installed on the system and can
+be loaded using 
+the 'module load <package__name>' command. If you are uncertain if a package is
+already available 
+on the system, please use 'module avail' or 'module spider' to search for it.
+============================================================================================== 
+/home/scur0196/.conda/envs/dino_wm/lib/python3.9/site-packages/wandb/sdk/internal/internal_api.py:30: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html
+  from pkg_resources import parse_version
+/home/scur0196/.conda/envs/dino_wm/lib/python3.9/site-packages/pkg_resources/__init__.py:2825: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('mpl_toolkits')`.
+Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+  declare_namespace(pkg)
+/home/scur0196/.conda/envs/dino_wm/lib/python3.9/site-packages/pkg_resources/__init__.py:2825: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('google')`.
+Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+  declare_namespace(pkg)
+/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm/custom_resolvers.py:4: UserWarning: 
+The version_base parameter is not specified.
+Please specify a compatability version level, or None.
+Will assume defaults for version 1.1
+  @hydra.main(config_path=None)
+Resuming from epoch 65: /home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm/checkpoints/outputs/wall_single/checkpoints/model_latest.pth
+Using cache found in /home/scur0196/.cache/torch/hub/facebookresearch_dinov2_main
+num_action_repeat: 1
+num_proprio_repeat: 1
+proprio encoder: ProprioceptiveEmbedding(
+  (patch_embed): Conv1d(2, 10, kernel_size=(1,), stride=(1,))
+)
+action encoder: ProprioceptiveEmbedding(
+  (patch_embed): Conv1d(10, 10, kernel_size=(1,), stride=(1,))
+)
+proprio_dim: 10, after repeat: 10
+action_dim: 10, after repeat: 10
+emb_dim: 404
+Model emb_dim:  404
+Evaluating Wall split=all data_dir=/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm/data/wall_single horizon=25
+Eligible episodes: 1920
+Selected episode ids: [5]
+
+=== Wall Episode 5 ===
+starting Wall ALM planner (split=all, horizon=25, frame_skip=1, I=25, O=25, gamma=1.5, refinement=500x0.3)
+video_plan length: 26
+expected macro video length: 26
+states length: 26
+actions length: 25
+frame_skip: 1
+wall layout: door=30.00 wall=32.00
+[wall ref sensitivity] macro=0 raw=0 visual_loss_from_start=0.000000 state_dist=0.00 state=(41.02,17.85)
+[wall ref sensitivity] macro=1 raw=1 visual_loss_from_start=0.009649 state_dist=1.09 state=(42.08,18.11)
+[wall ref sensitivity] macro=2 raw=2 visual_loss_from_start=0.013272 state_dist=1.43 state=(42.42,18.17)
+[wall ref sensitivity] macro=5 raw=5 visual_loss_from_start=0.042632 state_dist=3.89 state=(44.22,20.06)
+[wall ref sensitivity] macro=10 raw=10 visual_loss_from_start=0.092144 state_dist=7.98 state=(46.03,24.06)
+[wall ref sensitivity] macro=15 raw=15 visual_loss_from_start=0.103990 state_dist=11.83 state=(44.85,29.04)
+[wall ref sensitivity] macro=20 raw=20 visual_loss_from_start=0.108231 state_dist=16.16 state=(45.81,33.29)
+[wall ref sensitivity] macro=25 raw=25 visual_loss_from_start=0.096632 state_dist=17.77 state=(41.19,35.62)
+[alm outer 1 inner 2] video=0.0232 goal=0.0008 action=1.28 w_video=0.0232 w_goal=0.0079 w_action=0.0639 obj=0.0949 dual=-0.0606 rho_pen=0.3996 aug=0.4340 residual=39.2024 rho=1.5
+[mpc step 0] solver diagnostics: {'video_loss': 0.02322888746857643, 'goal_loss': 0.0007856793235987425, 'action_loss': 1.277130126953125, 'rho': 2.25, 'residual_norm': 39.202415466308594}(planner DEBUG)
+[refine check 0] raw_norm_sum=(0.623,0.102) ref_norm_sum=(0.872,0.953) delta_norm=1.1056
+[wall action trace 0] planner_action_sum=(0.629,0.777) planner_delta_est=(1.26,1.55) expert_action_sum=(1.055,0.261) expert_delta_est=(2.11,0.52) to_goal=(0.16,17.77) goal_dist=17.77
+[wall time check 0] raw_range=[0:1] oracle_now=(41.02,17.85) oracle_next=(42.08,18.11) oracle_disp=(1.05,0.26)
+[wall env step 0] state=(42.28,19.41) goal=(41.19,35.62) state_diff=16.25 oracle_t=(41.02,17.85)
+[env-ref loss 1](planner DEBUG)0.005300
+[alm outer 1 inner 2] video=0.0221 goal=0.0008 action=1.14 w_video=0.0221 w_goal=0.0079 w_action=0.0568 obj=0.0867 dual=-0.0502 rho_pen=0.3797 aug=0.4163 residual=39.0368 rho=1.5
+[refine check 1] raw_norm_sum=(0.101,-0.632) ref_norm_sum=(-0.491,-0.523) delta_norm=1.8262
+[wall action trace 1] planner_action_sum=(-0.397,-0.325) planner_delta_est=(-0.79,-0.65) expert_action_sum=(0.344,0.057) expert_delta_est=(0.69,0.11) to_goal=(-1.09,16.21) goal_dist=16.25
+[wall time check 1] raw_range=[1:2] oracle_now=(42.08,18.11) oracle_next=(42.42,18.17) oracle_disp=(0.34,0.06)
+[wall env step 1] state=(41.48,18.76) goal=(41.19,35.62) state_diff=16.87 oracle_t=(42.08,18.11)
+[env-ref loss 2](planner DEBUG)0.009560
+[alm outer 1 inner 2] video=0.0217 goal=0.0008 action=2.00 w_video=0.0217 w_goal=0.0079 w_action=0.0999 obj=0.1295 dual=-0.0465 rho_pen=0.3559 aug=0.4389 residual=38.4929 rho=1.5
+[refine check 2] raw_norm_sum=(2.408,0.061) ref_norm_sum=(4.095,0.712) delta_norm=1.7922
+[wall action trace 2] planner_action_sum=(3.053,0.598) planner_delta_est=(6.11,1.20) expert_action_sum=(0.671,0.152) expert_delta_est=(1.34,0.30) to_goal=(-0.30,16.86) goal_dist=16.87
+[wall time check 2] raw_range=[2:3] oracle_now=(42.42,18.17) oracle_next=(43.09,18.32) oracle_disp=(0.67,0.15)
+[wall env step 2] state=(47.59,19.95) goal=(41.19,35.62) state_diff=16.93 oracle_t=(42.42,18.17)
+[env-ref loss 3](planner DEBUG)0.013527
+[alm outer 1 inner 2] video=0.0209 goal=0.0008 action=1.12 w_video=0.0209 w_goal=0.0079 w_action=0.0562 obj=0.0850 dual=-0.0475 rho_pen=0.3521 aug=0.3896 residual=39.2983 rho=1.5
+[refine check 3] raw_norm_sum=(-0.438,0.292) ref_norm_sum=(-2.782,1.967) delta_norm=2.3565
+[wall action trace 3] planner_action_sum=(-2.121,1.535) planner_delta_est=(-4.24,3.07) expert_action_sum=(0.568,1.516) expert_delta_est=(1.14,3.03) to_goal=(-6.41,15.67) goal_dist=16.93
+[wall time check 3] raw_range=[3:4] oracle_now=(43.09,18.32) oracle_next=(43.66,19.84) oracle_disp=(0.57,1.52)
+[wall env step 3] state=(43.35,23.02) goal=(41.19,35.62) state_diff=12.78 oracle_t=(43.09,18.32)
+[env-ref loss 4](planner DEBUG)0.018989
+[alm outer 1 inner 2] video=0.0201 goal=0.0008 action=1.80 w_video=0.0201 w_goal=0.0079 w_action=0.0899 obj=0.1179 dual=-0.0393 rho_pen=0.3376 aug=0.4162 residual=39.6312 rho=1.5
+[refine check 4] raw_norm_sum=(2.441,-0.122) ref_norm_sum=(3.575,-0.332) delta_norm=1.8493
+[wall action trace 4] planner_action_sum=(2.662,-0.182) planner_delta_est=(5.32,-0.36) expert_action_sum=(0.562,0.220) expert_delta_est=(1.12,0.44) to_goal=(-2.16,12.60) goal_dist=12.78
+[wall time check 4] raw_range=[4:5] oracle_now=(43.66,19.84) oracle_next=(44.22,20.06) oracle_disp=(0.56,0.22)
+[wall env step 4] state=(48.67,22.66) goal=(41.19,35.62) state_diff=14.97 oracle_t=(43.66,19.84)
+[env-ref loss 5](planner DEBUG)0.002832
+[alm outer 1 inner 2] video=0.0186 goal=0.0008 action=0.97 w_video=0.0186 w_goal=0.0079 w_action=0.0485 obj=0.0750 dual=-0.0405 rho_pen=0.3140 aug=0.3484 residual=39.1145 rho=1.5
+[refine check 5] raw_norm_sum=(0.264,0.049) ref_norm_sum=(0.573,0.601) delta_norm=1.1042
+[wall action trace 5] planner_action_sum=(0.403,0.515) planner_delta_est=(0.81,1.03) expert_action_sum=(1.097,0.071) expert_delta_est=(2.19,0.14) to_goal=(-7.49,12.96) goal_dist=14.97
+[wall time check 5] raw_range=[5:6] oracle_now=(44.22,20.06) oracle_next=(45.32,20.13) oracle_disp=(1.10,0.07)
+[wall env step 5] state=(49.48,23.69) goal=(41.19,35.62) state_diff=14.53 oracle_t=(44.22,20.06)
+[env-ref loss 6](planner DEBUG)0.006675
+[alm outer 1 inner 2] video=0.0180 goal=0.0008 action=1.81 w_video=0.0180 w_goal=0.0079 w_action=0.0906 obj=0.1165 dual=-0.0372 rho_pen=0.2869 aug=0.3662 residual=38.2015 rho=1.5
+[refine check 6] raw_norm_sum=(2.011,-0.010) ref_norm_sum=(1.283,1.784) delta_norm=2.2846
+[wall action trace 6] planner_action_sum=(0.937,1.398) planner_delta_est=(1.87,2.80) expert_action_sum=(1.547,0.757) expert_delta_est=(3.09,1.51) to_goal=(-8.29,11.93) goal_dist=14.53
+[wall time check 6] raw_range=[6:7] oracle_now=(45.32,20.13) oracle_next=(46.87,20.89) oracle_disp=(1.55,0.76)
+[wall env step 6] state=(51.36,26.49) goal=(41.19,35.62) state_diff=13.67 oracle_t=(45.32,20.13)
+[env-ref loss 7](planner DEBUG)0.012423
+[alm outer 1 inner 2] video=0.0167 goal=0.0008 action=1.19 w_video=0.0167 w_goal=0.0079 w_action=0.0596 obj=0.0842 dual=-0.0313 rho_pen=0.2784 aug=0.3312 residual=38.7237 rho=1.5
+[refine check 7] raw_norm_sum=(0.904,-0.486) ref_norm_sum=(-0.804,0.956) delta_norm=1.4782
+[wall action trace 7] planner_action_sum=(-0.633,0.780) planner_delta_est=(-1.27,1.56) expert_action_sum=(0.397,1.147) expert_delta_est=(0.79,2.29) to_goal=(-10.17,9.14) goal_dist=13.67
+[wall time check 7] raw_range=[7:8] oracle_now=(46.87,20.89) oracle_next=(47.26,22.03) oracle_disp=(0.40,1.15)
+[wall env step 7] state=(50.09,28.05) goal=(41.19,35.62) state_diff=11.69 oracle_t=(46.87,20.89)
+[env-ref loss 8](planner DEBUG)0.028639
+[alm outer 1 inner 2] video=0.0157 goal=0.0008 action=0.99 w_video=0.0157 w_goal=0.0079 w_action=0.0496 obj=0.0732 dual=-0.0359 rho_pen=0.2806 aug=0.3179 residual=39.9954 rho=1.5
+[refine check 8] raw_norm_sum=(0.743,-0.232) ref_norm_sum=(1.515,0.933) delta_norm=1.6609
+[wall action trace 8] planner_action_sum=(1.112,0.762) planner_delta_est=(2.22,1.52) expert_action_sum=(-0.814,0.977) expert_delta_est=(-1.63,1.95) to_goal=(-8.90,7.58) goal_dist=11.69
+[wall time check 8] raw_range=[8:9] oracle_now=(47.26,22.03) oracle_next=(46.45,23.01) oracle_disp=(-0.81,0.98)
+[wall env step 8] state=(52.31,29.57) goal=(41.19,35.62) state_diff=12.67 oracle_t=(47.26,22.03)
+[env-ref loss 9](planner DEBUG)0.006311
+[alm outer 1 inner 2] video=0.0148 goal=0.0008 action=1.04 w_video=0.0148 w_goal=0.0079 w_action=0.0518 obj=0.0744 dual=-0.0247 rho_pen=0.2480 aug=0.2977 residual=38.8382 rho=1.5
+[refine check 9] raw_norm_sum=(-0.643,0.815) ref_norm_sum=(-0.883,3.052) delta_norm=2.1076
+[wall action trace 9] planner_action_sum=(-0.692,2.345) planner_delta_est=(-1.38,4.69) expert_action_sum=(-0.414,1.052) expert_delta_est=(-0.83,2.10) to_goal=(-11.13,6.05) goal_dist=12.67
+[wall time check 9] raw_range=[9:10] oracle_now=(46.45,23.01) oracle_next=(46.03,24.06) oracle_disp=(-0.41,1.05)
+[wall env step 9] state=(50.93,34.26) goal=(41.19,35.62) state_diff=9.84 oracle_t=(46.45,23.01)
+[env-ref loss 10](planner DEBUG)0.024861
+[alm outer 1 inner 2] video=0.0133 goal=0.0008 action=0.75 w_video=0.0133 w_goal=0.0079 w_action=0.0373 obj=0.0585 dual=-0.0218 rho_pen=0.2289 aug=0.2657 residual=38.4884 rho=1.5
+[mpc step 10] solver diagnostics: {'video_loss': 0.013320118188858032, 'goal_loss': 0.0007856793235987425, 'action_loss': 0.7461764812469482, 'rho': 2.25, 'residual_norm': 38.48844528198242}(planner DEBUG)
+[refine check 10] raw_norm_sum=(-0.243,-0.432) ref_norm_sum=(-0.202,2.578) delta_norm=1.8861
+[wall action trace 10] planner_action_sum=(-0.180,1.991) planner_delta_est=(-0.36,3.98) expert_action_sum=(-0.340,1.126) expert_delta_est=(-0.68,2.25) to_goal=(-9.74,1.36) goal_dist=9.84
+[wall time check 10] raw_range=[10:11] oracle_now=(46.03,24.06) oracle_next=(45.69,25.19) oracle_disp=(-0.34,1.13)
+[wall env step 10] state=(50.57,38.24) goal=(41.19,35.62) state_diff=9.74 oracle_t=(46.03,24.06)
+[env-ref loss 11](planner DEBUG)0.035897
+[alm outer 1 inner 2] video=0.0129 goal=0.0008 action=2.22 w_video=0.0129 w_goal=0.0079 w_action=0.1108 obj=0.1316 dual=-0.0258 rho_pen=0.2123 aug=0.3181 residual=38.2814 rho=1.5
+[refine check 11] raw_norm_sum=(-0.579,-2.777) ref_norm_sum=(-1.839,-1.662) delta_norm=1.4012
+[wall action trace 11] planner_action_sum=(-1.411,-1.175) planner_delta_est=(-2.82,-2.35) expert_action_sum=(-0.323,0.795) expert_delta_est=(-0.65,1.59) to_goal=(-9.38,-2.62) goal_dist=9.74
+[wall time check 11] raw_range=[11:12] oracle_now=(45.69,25.19) oracle_next=(45.37,25.98) oracle_disp=(-0.32,0.79)
+[wall env step 11] state=(47.75,35.89) goal=(41.19,35.62) state_diff=6.57 oracle_t=(45.69,25.19)
+[env-ref loss 12](planner DEBUG)0.009056
+[alm outer 1 inner 2] video=0.0119 goal=0.0008 action=0.70 w_video=0.0119 w_goal=0.0079 w_action=0.0348 obj=0.0546 dual=-0.0123 rho_pen=0.2020 aug=0.2443 residual=38.8501 rho=1.5
+[refine check 12] raw_norm_sum=(0.301,-0.287) ref_norm_sum=(-0.270,-0.688) delta_norm=1.5489
+[wall action trace 12] planner_action_sum=(-0.231,-0.448) planner_delta_est=(-0.46,-0.90) expert_action_sum=(-0.151,0.798) expert_delta_est=(-0.30,1.60) to_goal=(-6.56,-0.27) goal_dist=6.57
+[wall time check 12] raw_range=[12:13] oracle_now=(45.37,25.98) oracle_next=(45.22,26.78) oracle_disp=(-0.15,0.80)
+[wall env step 12] state=(47.29,35.00) goal=(41.19,35.62) state_diff=6.13 oracle_t=(45.37,25.98)
+[env-ref loss 13](planner DEBUG)0.007254
+[alm outer 1 inner 2] video=0.0114 goal=0.0008 action=1.23 w_video=0.0114 w_goal=0.0079 w_action=0.0616 obj=0.0808 dual=-0.0050 rho_pen=0.1749 aug=0.2507 residual=37.6689 rho=1.5
+[refine check 13] raw_norm_sum=(1.265,0.732) ref_norm_sum=(0.298,0.961) delta_norm=1.8771
+[wall action trace 13] planner_action_sum=(0.196,0.784) planner_delta_est=(0.39,1.57) expert_action_sum=(0.109,0.555) expert_delta_est=(0.22,1.11) to_goal=(-6.10,0.63) goal_dist=6.13
+[wall time check 13] raw_range=[13:14] oracle_now=(45.22,26.78) oracle_next=(45.33,27.34) oracle_disp=(0.11,0.55)
+[wall env step 13] state=(47.68,36.56) goal=(41.19,35.62) state_diff=6.56 oracle_t=(45.22,26.78)
+[env-ref loss 14](planner DEBUG)0.006893
+[alm outer 1 inner 2] video=0.0099 goal=0.0008 action=1.34 w_video=0.0099 w_goal=0.0079 w_action=0.0670 obj=0.0848 dual=-0.0018 rho_pen=0.1529 aug=0.2359 residual=36.5430 rho=1.5
+[refine check 14] raw_norm_sum=(0.308,2.354) ref_norm_sum=(0.077,2.104) delta_norm=1.6752
+[wall action trace 14] planner_action_sum=(0.030,1.637) planner_delta_est=(0.06,3.27) expert_action_sum=(-0.483,1.707) expert_delta_est=(-0.97,3.41) to_goal=(-6.49,-0.94) goal_dist=6.56
+[wall time check 14] raw_range=[14:15] oracle_now=(45.33,27.34) oracle_next=(44.85,29.04) oracle_disp=(-0.48,1.71)
+[wall env step 14] state=(47.74,39.84) goal=(41.19,35.62) state_diff=7.79 oracle_t=(45.33,27.34)
+[env-ref loss 15](planner DEBUG)0.001508
+[alm outer 1 inner 2] video=0.0092 goal=0.0008 action=0.85 w_video=0.0092 w_goal=0.0079 w_action=0.0424 obj=0.0594 dual=-0.0015 rho_pen=0.1386 aug=0.1965 residual=36.3334 rho=1.5
+[refine check 15] raw_norm_sum=(1.044,0.966) ref_norm_sum=(1.605,1.325) delta_norm=1.7117
+[wall action trace 15] planner_action_sum=(1.180,1.056) planner_delta_est=(2.36,2.11) expert_action_sum=(0.223,0.822) expert_delta_est=(0.45,1.64) to_goal=(-6.55,-4.22) goal_dist=7.79
+[wall time check 15] raw_range=[15:16] oracle_now=(44.85,29.04) oracle_next=(45.07,29.87) oracle_disp=(0.22,0.82)
+[wall env step 15] state=(50.10,41.95) goal=(41.19,35.62) state_diff=10.93 oracle_t=(44.85,29.04)
+[env-ref loss 16](planner DEBUG)0.003114
+[alm outer 1 inner 2] video=0.0080 goal=0.0008 action=0.60 w_video=0.0080 w_goal=0.0079 w_action=0.0302 obj=0.0460 dual=-0.0045 rho_pen=0.1355 aug=0.1771 residual=38.0573 rho=1.5
+[refine check 16] raw_norm_sum=(-0.122,0.841) ref_norm_sum=(-1.076,0.522) delta_norm=1.3639
+[wall action trace 16] planner_action_sum=(-0.837,0.456) planner_delta_est=(-1.67,0.91) expert_action_sum=(0.190,0.938) expert_delta_est=(0.38,1.88) to_goal=(-8.91,-6.33) goal_dist=10.93
+[wall time check 16] raw_range=[16:17] oracle_now=(45.07,29.87) oracle_next=(45.26,30.80) oracle_disp=(0.19,0.94)
+[wall env step 16] state=(48.42,42.86) goal=(41.19,35.62) state_diff=10.24 oracle_t=(45.07,29.87)
+[env-ref loss 17](planner DEBUG)0.003479
+[alm outer 1 inner 2] video=0.0078 goal=0.0008 action=1.65 w_video=0.0078 w_goal=0.0079 w_action=0.0825 obj=0.0981 dual=-0.0025 rho_pen=0.1212 aug=0.2168 residual=38.1803 rho=1.5
+[refine check 17] raw_norm_sum=(0.681,2.514) ref_norm_sum=(-0.788,3.511) delta_norm=2.0767
+[wall action trace 17] planner_action_sum=(-0.621,2.688) planner_delta_est=(-1.24,5.38) expert_action_sum=(0.476,1.080) expert_delta_est=(0.95,2.16) to_goal=(-7.24,-7.24) goal_dist=10.24
+[wall time check 17] raw_range=[17:18] oracle_now=(45.26,30.80) oracle_next=(45.73,31.88) oracle_disp=(0.48,1.08)
+[wall env step 17] state=(47.18,48.24) goal=(41.19,35.62) state_diff=13.97 oracle_t=(45.26,30.80)
+[env-ref loss 18](planner DEBUG)0.018170
+[alm outer 1 inner 2] video=0.0068 goal=0.0008 action=1.58 w_video=0.0068 w_goal=0.0079 w_action=0.0792 obj=0.0938 dual=-0.0085 rho_pen=0.0995 aug=0.1849 residual=37.2584 rho=1.5
+[refine check 18] raw_norm_sum=(2.730,-0.335) ref_norm_sum=(1.502,0.435) delta_norm=1.4722
+[wall action trace 18] planner_action_sum=(1.102,0.390) planner_delta_est=(2.20,0.78) expert_action_sum=(0.313,0.829) expert_delta_est=(0.63,1.66) to_goal=(-6.00,-12.61) goal_dist=13.97
+[wall time check 18] raw_range=[18:19] oracle_now=(45.73,31.88) oracle_next=(46.05,32.71) oracle_disp=(0.31,0.83)
+[wall env step 18] state=(49.39,49.02) goal=(41.19,35.62) state_diff=15.71 oracle_t=(45.73,31.88)
+[env-ref loss 19](planner DEBUG)0.009320
+[alm outer 1 inner 2] video=0.0054 goal=0.0008 action=0.27 w_video=0.0054 w_goal=0.0079 w_action=0.0135 obj=0.0267 dual=0.0058 rho_pen=0.0839 aug=0.1164 residual=37.1239 rho=1.5
+[refine check 19] raw_norm_sum=(0.178,-0.195) ref_norm_sum=(0.989,-0.284) delta_norm=1.5135
+[wall action trace 19] planner_action_sum=(0.716,-0.146) planner_delta_est=(1.43,-0.29) expert_action_sum=(-0.240,0.577) expert_delta_est=(-0.48,1.15) to_goal=(-8.20,-13.39) goal_dist=15.71
+[wall time check 19] raw_range=[19:20] oracle_now=(46.05,32.71) oracle_next=(45.81,33.29) oracle_disp=(-0.24,0.58)
+[wall env step 19] state=(50.82,48.73) goal=(41.19,35.62) state_diff=16.26 oracle_t=(46.05,32.71)
+[env-ref loss 20](planner DEBUG)0.000273
+[alm outer 1 inner 2] video=0.0045 goal=0.0008 action=1.23 w_video=0.0045 w_goal=0.0079 w_action=0.0617 obj=0.0740 dual=0.0043 rho_pen=0.0663 aug=0.1446 residual=35.9424 rho=1.5
+[mpc step 20] solver diagnostics: {'video_loss': 0.004458371549844742, 'goal_loss': 0.0007856794400140643, 'action_loss': 1.2333440780639648, 'rho': 2.25, 'residual_norm': 35.94242477416992}(planner DEBUG)
+[refine check 20] raw_norm_sum=(-1.088,1.525) ref_norm_sum=(-2.160,3.678) delta_norm=1.4151
+[wall action trace 20] planner_action_sum=(-1.653,2.812) planner_delta_est=(-3.31,5.62) expert_action_sum=(-0.754,1.170) expert_delta_est=(-1.51,2.34) to_goal=(-9.63,-13.10) goal_dist=16.26
+[wall time check 20] raw_range=[20:21] oracle_now=(45.81,33.29) oracle_next=(45.05,34.46) oracle_disp=(-0.75,1.17)
+[wall env step 20] state=(47.51,54.35) goal=(41.19,35.62) state_diff=19.77 oracle_t=(45.81,33.29)
+[env-ref loss 21](planner DEBUG)0.017577
+[alm outer 1 inner 2] video=0.0035 goal=0.0008 action=0.42 w_video=0.0035 w_goal=0.0079 w_action=0.0209 obj=0.0322 dual=0.0153 rho_pen=0.0522 aug=0.0997 residual=35.3891 rho=1.5
+[refine check 21] raw_norm_sum=(0.315,-0.827) ref_norm_sum=(-0.745,-0.890) delta_norm=1.2964
+[wall action trace 21] planner_action_sum=(-0.588,-0.599) planner_delta_est=(-1.18,-1.20) expert_action_sum=(-0.500,0.830) expert_delta_est=(-1.00,1.66) to_goal=(-6.33,-18.73) goal_dist=19.77
+[wall time check 21] raw_range=[21:22] oracle_now=(45.05,34.46) oracle_next=(44.55,35.29) oracle_disp=(-0.50,0.83)
+[wall env step 21] state=(46.34,53.15) goal=(41.19,35.62) state_diff=18.27 oracle_t=(45.05,34.46)
+[env-ref loss 22](planner DEBUG)0.008616
+[alm outer 1 inner 2] video=0.0027 goal=0.0008 action=0.23 w_video=0.0027 w_goal=0.0079 w_action=0.0117 obj=0.0222 dual=0.0224 rho_pen=0.0286 aug=0.0733 residual=31.0357 rho=1.5
+[refine check 22] raw_norm_sum=(0.220,-0.153) ref_norm_sum=(-0.924,-1.887) delta_norm=2.3705
+[wall action trace 22] planner_action_sum=(-0.723,-1.343) planner_delta_est=(-1.45,-2.69) expert_action_sum=(-0.397,0.263) expert_delta_est=(-0.79,0.53) to_goal=(-5.15,-17.53) goal_dist=18.27
+[wall time check 22] raw_range=[22:23] oracle_now=(44.55,35.29) oracle_next=(44.16,35.55) oracle_disp=(-0.40,0.26)
+[wall env step 22] state=(44.89,50.47) goal=(41.19,35.62) state_diff=15.30 oracle_t=(44.55,35.29)
+[env-ref loss 23](planner DEBUG)0.027371
+[alm outer 1 inner 2] video=0.0023 goal=0.0008 action=1.32 w_video=0.0023 w_goal=0.0080 w_action=0.0662 obj=0.0765 dual=0.0052 rho_pen=0.0239 aug=0.1056 residual=34.0228 rho=1.5
+[refine check 23] raw_norm_sum=(-0.249,2.628) ref_norm_sum=(-0.462,1.942) delta_norm=1.4864
+[wall action trace 23] planner_action_sum=(-0.376,1.516) planner_delta_est=(-0.75,3.03) expert_action_sum=(-1.389,0.517) expert_delta_est=(-2.78,1.03) to_goal=(-3.71,-14.84) goal_dist=15.30
+[wall time check 23] raw_range=[23:24] oracle_now=(44.16,35.55) oracle_next=(42.77,36.07) oracle_disp=(-1.39,0.52)
+[wall env step 23] state=(44.14,53.50) goal=(41.19,35.62) state_diff=18.12 oracle_t=(44.16,35.55)
+[env-ref loss 24](planner DEBUG)0.002738
+[alm outer 1 inner 2] video=0.0000 goal=0.0007 action=0.82 w_video=0.0000 w_goal=0.0074 w_action=0.0411 obj=0.0485 dual=0.0052 rho_pen=0.0102 aug=0.0640 residual=32.4576 rho=1.5
+[mpc step 24] solver diagnostics: {'video_loss': 0.0, 'goal_loss': 0.0007371217361651361, 'action_loss': 0.822892427444458, 'rho': 2.25, 'residual_norm': 32.457550048828125}(planner DEBUG)
+[refine check 24] raw_norm_sum=(-1.764,-0.634) ref_norm_sum=(-1.874,-0.164) delta_norm=2.0210
+[wall action trace 24] planner_action_sum=(-1.438,-0.057) planner_delta_est=(-2.88,-0.11) expert_action_sum=(-1.582,-0.448) expert_delta_est=(-3.16,-0.90) to_goal=(-2.96,-17.88) goal_dist=18.12
+[wall time check 24] raw_range=[24:25] oracle_now=(42.77,36.07) oracle_next=(41.19,35.62) oracle_disp=(-1.58,-0.45)
+[wall env step 24] state=(41.27,53.39) goal=(41.19,35.62) state_diff=17.76 oracle_t=(42.77,36.07)
+[env-ref loss 25](planner DEBUG)0.000031
+Wall ALM planner finished
+first planner macro (normalized): tensor([[ 0.1515,  0.0950],
+        [ 0.2296,  0.6544],
+        [ 0.0190, -0.2788],
+        [-0.2374, -0.0015],
+        [ 0.7098,  0.4835]])
+first planner macro (raw env action scale): tensor([[ 0.1084,  0.0841],
+        [ 0.1672,  0.5018],
+        [ 0.0087, -0.1950],
+        [-0.1842,  0.0121],
+        [ 0.5285,  0.3742]])
+first expert raw actions: tensor([[1.0546, 0.2609]])
+first expert normalized actions: tensor([[1.4092, 0.3318]])
+eval metrics: {'success': False, 'state_dist': 17.763636}
+agent/dot position: [41.266315 53.38631 ]
+goal position: [41.18614  35.622856]
+state_diff: 17.763636
+success threshold: state_dist < 4.5
+[wall ep 5] split=all horizon=25 success=False state_dist=17.76 dyn_residual=32.4576
+
+=== Wall Evaluation Summary ===
+{'episode_idx': 5, 'split': 'all', 'success': False, 'state_dist': 17.763635635375977, 'dynamics_residual': 32.457550048828125, 'executed_actions': 25, 'planning_horizon': 25}
+Success rate: 0.000  mean_state_dist: 17.76  mean_dyn_res: 32.4576

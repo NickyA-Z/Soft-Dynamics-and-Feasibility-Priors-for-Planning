@@ -67,7 +67,10 @@ def step_env(
     obs = None
     env_device = torch.device(getattr(env.unwrapped, "device", "cpu"))
     for primitive_action in primitive_actions:
-        primitive_action = primitive_action.to(device=env_device, dtype=torch.float32)
+        # WallEnvWrapper applies next_state = state + action * 2 internally, while
+        # wall_single dataset actions already match state deltas. Divide by two so
+        # denormalized dataset-scale actions replay the oracle dynamics.
+        primitive_action = primitive_action.to(device=env_device, dtype=torch.float32) / 2.0
         step_out = env.step(primitive_action)
         if len(step_out) == 5:
             obs, _, terminated, truncated, _ = step_out
@@ -98,42 +101,22 @@ def load_model_once(device: torch.device, model_name: str = MODEL_NAME):
 def build_planner(
     world_model: DinoWorldModelAdapter,
     horizon: int,
+    inner_steps: int = 25,
+    outer_steps: int = 25,
+    refinement_samples: int = 500,
+    refinement_variance: float = 0.3,
+    disable_refinement: bool = False,
     diagnostic_inner_interval: int | None = None,
     diagnostic_outer: bool = False,
 ) -> GVPWMPlanner:
     lambda_action = 0.05 if horizon == 25 else 0.1
     rho_growth = 1.5 if horizon == 25 else 1.9
-    
-    
-    
-    """
-            alm=ALMConfig(
-                inner_steps=25,
-                outer_steps=25,
-                learning_rate=0.05,
-                rho_init=1.0,
-                rho_growth=rho_growth,
-                rho_max=1_000.0,
-                lambda_video=1.0,
-                lambda_goal=10.0,
-                lambda_action=lambda_action,
-                use_video_init=True,
-                use_video_loss=True,
-                fix_states_to_video=False,
-                use_action_reparameterization=True,
-                diagnostic_inner_interval=diagnostic_inner_interval,
-                diagnostic_outer=diagnostic_outer,
-                residual_reduction="mean",
-            ),
-    """
-    
-    
     return GVPWMPlanner(
         world_model=world_model,
         config=PlannerConfig(
             alm=ALMConfig(
-                inner_steps=25,
-                outer_steps=25,
+                inner_steps=inner_steps,
+                outer_steps=outer_steps,
                 learning_rate=0.05,
                 rho_init=1.0,
                 rho_growth=rho_growth,
@@ -155,9 +138,9 @@ def build_planner(
                 warm_start=True,
             ),
             refinement=RefinementConfig(
-                enabled=True,
-                num_samples=500,
-                noise_variance=0.3,
+                enabled=not disable_refinement,
+                num_samples=refinement_samples,
+                noise_variance=refinement_variance,
             ),
         ),
     )
@@ -192,8 +175,14 @@ def evaluate_episode(
     frame_skip: int,
     data_dir: Path,
     stats: dict[str, torch.Tensor],
+    inner_steps: int = 25,
+    outer_steps: int = 25,
+    refinement_samples: int = 500,
+    refinement_variance: float = 0.3,
+    disable_refinement: bool = False,
     diagnostic_inner_interval: int | None = None,
     diagnostic_outer: bool = False,
+    allow_scale_mismatch: bool = False,
     model=None,
     model_cfg=None,
     device=None,
@@ -220,6 +209,26 @@ def evaluate_episode(
         )
     action_repeat = wm_action_dim // primitive_action_dim
 
+    print(
+        f"[wall scale check] "
+        f"primitive_action_dim={primitive_action_dim} "
+        f"wm_action_dim={wm_action_dim} "
+        f"action_repeat={action_repeat} "
+        f"frame_skip={frame_skip} "
+        f"horizon={horizon}"
+    )
+    if action_repeat != frame_skip:
+        print(
+            f"[wall scale WARNING] action_repeat ({action_repeat}) != frame_skip ({frame_skip}); "
+            f"planner executes {action_repeat} primitive env steps per MPC step, "
+            f"but oracle video advances {frame_skip} raw dataset steps per macro step."
+        )
+        if not allow_scale_mismatch:
+            raise ValueError(
+                "Invalid Wall time scale: action_repeat must match frame_skip for this checkpoint. "
+                f"Use --frame-skip {action_repeat}, or pass --allow-scale-mismatch only for debugging."
+            )
+
     action_mean = episode["action_mean"].to(device=device, dtype=torch.float32)
     action_std = episode["action_std"].to(device=device, dtype=torch.float32)
     action_low = episode["action_low"].to(device=device, dtype=torch.float32).repeat(action_repeat)
@@ -236,6 +245,11 @@ def evaluate_episode(
     planner = build_planner(
         world_model=world_model,
         horizon=horizon,
+        inner_steps=inner_steps,
+        outer_steps=outer_steps,
+        refinement_samples=refinement_samples,
+        refinement_variance=refinement_variance,
+        disable_refinement=disable_refinement,
         diagnostic_inner_interval=diagnostic_inner_interval,
         diagnostic_outer=diagnostic_outer,
     )
@@ -243,10 +257,11 @@ def evaluate_episode(
     print(
         f"starting Wall ALM planner "
         f"(split={split}, horizon={horizon}, frame_skip={frame_skip}, "
-        f"I=25, O=25, gamma={'1.5' if horizon == 25 else '1.9'}, refinement=500x0.3)"
+        f"I={inner_steps}, O={outer_steps}, gamma={'1.5' if horizon == 25 else '1.9'}, "
+        f"refinement={'off' if disable_refinement else f'{refinement_samples}x{refinement_variance}'})"
     )
 
-    trace_counter = {"step": 0}
+    trace_counter = {"step": 0, "primitive_steps": 0}
     goal_state = episode["states"][-1].detach().cpu().numpy()
 
     def traced_step_fn(action: torch.Tensor):
@@ -255,11 +270,13 @@ def evaluate_episode(
         raw1 = raw0 + frame_skip
 
         action_matrix = action.detach().cpu().reshape(action_repeat, primitive_action_dim)
-        planner_macro_action = ((action_matrix * action_std.cpu()) + action_mean.cpu()).sum(dim=0)
-        planner_delta_est = planner_macro_action * 2.0
+        planner_raw_actions = (action_matrix * action_std.cpu()) + action_mean.cpu()
+        expert_raw_actions = episode["actions"][raw0:raw1].float()
+        planner_macro_action = planner_raw_actions.sum(dim=0)
+        planner_delta_est = planner_macro_action
 
-        expert_macro_action = episode["actions"][raw0:raw1].float().sum(dim=0)
-        expert_delta_est = expert_macro_action * 2.0
+        expert_macro_action = expert_raw_actions.sum(dim=0)
+        expert_delta_est = expert_macro_action
 
         oracle_now = episode["states"][raw0]
         oracle_next = episode["states"][raw1]
@@ -283,6 +300,14 @@ def evaluate_episode(
             f"oracle_next=({oracle_next[0]:.2f},{oracle_next[1]:.2f}) "
             f"oracle_disp=({oracle_disp[0]:.2f},{oracle_disp[1]:.2f})"
         )
+        if t < 3:
+            print(
+                f"[wall primitive shape {t}] "
+                f"planner_raw_actions_shape={tuple(planner_raw_actions.shape)} "
+                f"expert_raw_actions_shape={tuple(expert_raw_actions.shape)}"
+            )
+            print(f"[wall primitive check {t}] planner_raw_actions={planner_raw_actions}")
+            print(f"[wall primitive check {t}] expert_raw_actions={expert_raw_actions}")
 
         obs = step_env(
             env,
@@ -305,6 +330,13 @@ def evaluate_episode(
             f"goal=({goal_state[0]:.2f},{goal_state[1]:.2f}) "
             f"state_diff={state_diff:.2f} "
             f"oracle_t=({oracle_state[0]:.2f},{oracle_state[1]:.2f})"
+        )
+        trace_counter["primitive_steps"] += action_repeat
+        print(
+            f"[wall env time {t}] "
+            f"mpc_step={trace_counter['step']} "
+            f"primitive_steps_executed={trace_counter['primitive_steps']} "
+            f"oracle_raw_index={raw1}"
         )
 
         trace_counter["step"] += 1
@@ -336,6 +368,24 @@ def evaluate_episode(
                 f"visual_loss_from_start={float(visual_loss_from_start.detach().cpu()):.6f} "
                 f"state_dist={float(state_dist_from_start.cpu()):.2f} "
                 f"state=({st[0]:.2f},{st[1]:.2f})"
+            )
+
+    with torch.no_grad():
+        for k in range(min(3, horizon)):
+            raw0 = k * frame_skip
+            raw1 = raw0 + frame_skip
+            expert_macro_actions = episode["actions"][raw0:raw1].float()
+            expert_action_sum = expert_macro_actions.sum(dim=0)
+            expert_delta_x1 = expert_action_sum
+            expert_delta_x2 = expert_action_sum * 2.0
+            oracle_delta = episode["states"][raw1] - episode["states"][raw0]
+            print(
+                f"[wall expert scale {k}] "
+                f"raw_range=[{raw0}:{raw1}] "
+                f"expert_actions_shape={tuple(expert_macro_actions.shape)} "
+                f"expert_delta_x1=({expert_delta_x1[0]:.2f},{expert_delta_x1[1]:.2f}) "
+                f"expert_delta_x2=({expert_delta_x2[0]:.2f},{expert_delta_x2[1]:.2f}) "
+                f"oracle_delta=({oracle_delta[0]:.2f},{oracle_delta[1]:.2f})"
             )
 
     result = planner.run_mpc(
@@ -389,6 +439,13 @@ def parse_args():
     parser.add_argument("--num-episodes", type=int, default=DEFAULT_NUM_EPISODES, help="Number of eligible episodes to evaluate")
     parser.add_argument("--model-name", default=MODEL_NAME, help="Checkpoint folder under dino_wm/checkpoints/outputs")
     parser.add_argument("--data-root", default=str(DATA_ROOT), help="Wall dataset directory")
+    parser.add_argument("--inner-steps", type=int, default=25, help="ALM inner optimizer steps")
+    parser.add_argument("--outer-steps", type=int, default=25, help="ALM outer penalty updates")
+    parser.add_argument("--refinement-samples", type=int, default=500, help="Number of random refinement samples")
+    parser.add_argument("--refinement-variance", type=float, default=0.3, help="Refinement noise variance")
+    parser.add_argument("--disable-refinement", action="store_true", help="Disable random action refinement")
+    parser.add_argument("--quick", action="store_true", help="Use small ALM/refinement settings for smoke tests")
+    parser.add_argument("--allow-scale-mismatch", action="store_true", help="Allow action_repeat != frame_skip for diagnostics only")
     parser.add_argument("--debug-inner-every", type=int, default=None, help="Print ALM diagnostics every N inner iterations")
     parser.add_argument("--debug-outer", action="store_true", help="Print diagnostics after every ALM outer iteration")
     return parser.parse_args()
@@ -408,6 +465,11 @@ def main():
     eligible = candidate_wall_episodes(data_dir, horizon=args.horizon, frame_skip=frame_skip)
     eval_episodes = eligible[args.start_index : args.start_index + args.num_episodes]
 
+    inner_steps = 3 if args.quick else args.inner_steps
+    outer_steps = 2 if args.quick else args.outer_steps
+    refinement_samples = 0 if args.quick else args.refinement_samples
+    disable_refinement = args.disable_refinement or args.quick
+
     print(f"Evaluating Wall split={args.split} data_dir={data_dir} horizon={args.horizon}")
     print(f"Eligible episodes: {len(eligible)}")
     print(f"Selected episode ids: {eval_episodes}")
@@ -424,8 +486,14 @@ def main():
                     frame_skip=frame_skip,
                     data_dir=data_dir,
                     stats=stats,
+                    inner_steps=inner_steps,
+                    outer_steps=outer_steps,
+                    refinement_samples=refinement_samples,
+                    refinement_variance=args.refinement_variance,
+                    disable_refinement=disable_refinement,
                     diagnostic_inner_interval=args.debug_inner_every,
                     diagnostic_outer=args.debug_outer,
+                    allow_scale_mismatch=args.allow_scale_mismatch,
                     model=model,
                     model_cfg=model_cfg,
                     device=device,

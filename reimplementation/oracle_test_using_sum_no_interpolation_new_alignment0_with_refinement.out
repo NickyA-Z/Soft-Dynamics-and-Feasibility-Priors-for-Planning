@@ -1,0 +1,269 @@
+============================================================================================== 
+Warning! Mixing Conda and module environments may lead to corruption of the
+user environment. 
+We do not recommend users mixing those two environments unless absolutely
+necessary. Note that 
+SURF does not provide any support for Conda environment.
+For more information, please refer to our software policy page:
+https://servicedesk.surf.nl/wiki/display/WIKI/Software+policy+Snellius#SoftwarepolicySnellius-UseofAnacondaandMinicondaenvironmentsonSnellius 
+
+Remember that many packages have already been installed on the system and can
+be loaded using 
+the 'module load <package__name>' command. If you are uncertain if a package is
+already available 
+on the system, please use 'module avail' or 'module spider' to search for it.
+============================================================================================== 
+/home/scur0196/.conda/envs/dino_wm/lib/python3.9/site-packages/wandb/sdk/internal/internal_api.py:30: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html
+  from pkg_resources import parse_version
+/home/scur0196/.conda/envs/dino_wm/lib/python3.9/site-packages/pkg_resources/__init__.py:2825: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('mpl_toolkits')`.
+Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+  declare_namespace(pkg)
+/home/scur0196/.conda/envs/dino_wm/lib/python3.9/site-packages/pkg_resources/__init__.py:2825: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('google')`.
+Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+  declare_namespace(pkg)
+/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm/custom_resolvers.py:4: UserWarning: 
+The version_base parameter is not specified.
+Please specify a compatability version level, or None.
+Will assume defaults for version 1.1
+  @hydra.main(config_path=None)
+Resuming from epoch 2: /home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm/checkpoints/outputs/pusht/checkpoints/model_latest.pth
+Using cache found in /home/scur0196/.cache/torch/hub/facebookresearch_dinov2_main
+num_action_repeat: 1
+num_proprio_repeat: 1
+proprio encoder: ProprioceptiveEmbedding(
+  (patch_embed): Conv1d(4, 10, kernel_size=(1,), stride=(1,))
+)
+action encoder: ProprioceptiveEmbedding(
+  (patch_embed): Conv1d(10, 10, kernel_size=(1,), stride=(1,))
+)
+proprio_dim: 10, after repeat: 10
+action_dim: 10, after repeat: 10
+emb_dim: 404
+Model emb_dim:  404
+Evaluating split=val horizon=25
+Eligible episodes: 8
+Selected episode ids: [15]
+
+=== Episode 15 ===
+starting ALM planner (split=val, horizon=25, I=25, O=25, gamma=1.9, refinement=500x0.3)
+video_plan length: 26
+expected macro video length: 26
+states length: 126
+rel_actions length: 125
+frame_skip: 5
+[mpc step 0] solver diagnostics: {'video_loss': 0.6910915374755859, 'goal_loss': 0.19817502796649933, 'action_loss': 147.3851776123047, 'rho': 1000.0, 'residual_norm': 13.454498291015625}(planner DEBUG)
+[refine check 0] raw_norm_sum=(-0.488,-1.148) ref_norm_sum=(-2.715,-3.210) delta_norm=2.1905
+[action trace 0] macro_disp_px=(-59.2,-60.9) planner_macro_px=(-59.2,-60.9) expert_macro_px=(-45.8,-26.2) to_block=(-181.1,-234.5) agent_block_dist=296.3
+vel=(0.0,0.0)
+[time check 0] raw_range=[0:5] oracle_agent_now=(432.0,398.0) oracle_agent_next=(413.5,389.6) oracle_agent_disp=(-18.5,-8.4) expert_macro_disp=(-45.8,-26.2) planner_macro_disp=(-59.2,-60.9) oracle_block_disp=(0.0,0.0) oracle_angle_disp=0.000
+goal_block=(266.9,236.7,0.749) 
+[env step 0] agent=(409.1,373.9) block=(250.9,163.5) angle=0.587 agent_diff=192.0 block_diff=74.9 pos_diff=206.1 angle_diff=0.162
+oracle_t_agent=(432.0,398.0) oracle_t_block=(250.9,163.5) oracle_t_angle=0.587 
+[refine check 1] raw_norm_sum=(-0.398,-3.010) ref_norm_sum=(-0.195,-3.481) delta_norm=1.8056
+[action trace 1] macro_disp_px=(-8.3,-66.3) planner_macro_px=(-8.3,-66.3) expert_macro_px=(-42.3,-279.0) to_block=(-158.2,-210.4) agent_block_dist=263.2
+vel=(-39.5,-22.5)
+[time check 1] raw_range=[5:10] oracle_agent_now=(413.5,389.6) oracle_agent_next=(399.8,281.8) oracle_agent_disp=(-13.7,-107.8) expert_macro_disp=(-42.3,-279.0) planner_macro_disp=(-8.3,-66.3) oracle_block_disp=(0.0,0.0) oracle_angle_disp=0.000
+goal_block=(266.9,236.7,0.749) 
+[env step 1] agent=(407.0,349.3) block=(250.9,163.5) angle=0.587 agent_diff=172.8 block_diff=74.9 pos_diff=188.4 angle_diff=0.162
+oracle_t_agent=(413.5,389.6) oracle_t_block=(250.9,163.5) oracle_t_angle=0.587 
+[refine check 2] raw_norm_sum=(-2.114,-0.953) ref_norm_sum=(-0.924,-3.630) delta_norm=1.8067
+[action trace 2] macro_disp_px=(-23.0,-69.3) planner_macro_px=(-23.0,-69.3) expert_macro_px=(-126.9,-361.0) to_block=(-156.1,-185.7) agent_block_dist=242.6
+vel=(-82.5,-101.0)
+[time check 2] raw_range=[10:15] oracle_agent_now=(399.8,281.8) oracle_agent_next=(345.9,132.2) oracle_agent_disp=(-53.9,-149.6) expert_macro_disp=(-126.9,-361.0) planner_macro_disp=(-23.0,-69.3) oracle_block_disp=(0.0,0.0) oracle_angle_disp=0.000
+goal_block=(266.9,236.7,0.749) 
+[env step 2] agent=(396.9,320.4) block=(250.9,163.5) angle=0.587 agent_diff=146.3 block_diff=74.9 pos_diff=164.4 angle_diff=0.162
+oracle_t_agent=(399.8,281.8) oracle_t_block=(250.9,163.5) oracle_t_angle=0.587 
+[refine check 3] raw_norm_sum=(-2.696,-2.258) ref_norm_sum=(-2.364,-5.973) delta_norm=2.4255
+[action trace 3] macro_disp_px=(-52.1,-116.2) planner_macro_px=(-52.1,-116.2) expert_macro_px=(-221.8,-130.4) to_block=(-146.0,-156.9) agent_block_dist=214.3
+vel=(-58.6,-79.9)
+[time check 3] raw_range=[15:20] oracle_agent_now=(345.9,132.2) oracle_agent_next=(261.5,75.7) oracle_agent_disp=(-84.5,-56.5) expert_macro_disp=(-221.8,-130.4) planner_macro_disp=(-52.1,-116.2) oracle_block_disp=(0.0,0.0) oracle_angle_disp=0.000
+goal_block=(266.9,236.7,0.749) 
+[env step 3] agent=(374.8,274.2) block=(250.9,163.5) angle=0.587 agent_diff=103.0 block_diff=74.9 pos_diff=127.3 angle_diff=0.162
+oracle_t_agent=(345.9,132.2) oracle_t_block=(250.9,163.5) oracle_t_angle=0.587 
+[refine check 4] raw_norm_sum=(-2.646,-0.200) ref_norm_sum=(1.447,-1.217) delta_norm=2.3296
+[action trace 4] macro_disp_px=(24.9,-21.0) planner_macro_px=(24.9,-21.0) expert_macro_px=(-222.4,-8.7) to_block=(-123.9,-110.7) agent_block_dist=166.2
+vel=(-27.5,-116.2)
+[time check 4] raw_range=[20:25] oracle_agent_now=(261.5,75.7) oracle_agent_next=(166.6,69.6) oracle_agent_disp=(-94.8,-6.2) expert_macro_disp=(-222.4,-8.7) planner_macro_disp=(24.9,-21.0) oracle_block_disp=(0.0,0.0) oracle_angle_disp=0.000
+goal_block=(266.9,236.7,0.749) 
+[env step 4] agent=(383.8,264.2) block=(250.9,163.5) angle=0.587 agent_diff=107.5 block_diff=74.9 pos_diff=131.0 angle_diff=0.162
+oracle_t_agent=(261.5,75.7) oracle_t_block=(250.9,163.5) oracle_t_angle=0.587 
+[refine check 5] raw_norm_sum=(-1.944,-1.847) ref_norm_sum=(-0.515,-2.285) delta_norm=1.7629
+[action trace 5] macro_disp_px=(-14.7,-42.3) planner_macro_px=(-14.7,-42.3) expert_macro_px=(-15.4,71.0) to_block=(-132.9,-100.6) agent_block_dist=166.7
+vel=(11.8,-64.3)
+[time check 5] raw_range=[25:30] oracle_agent_now=(166.6,69.6) oracle_agent_next=(156.8,98.0) oracle_agent_disp=(-9.8,28.4) expert_macro_disp=(-15.4,71.0) planner_macro_disp=(-14.7,-42.3) oracle_block_disp=(0.0,0.0) oracle_angle_disp=0.000
+goal_block=(266.9,236.7,0.749) 
+[env step 5] agent=(378.4,246.0) block=(250.9,163.5) angle=0.587 agent_diff=97.9 block_diff=74.9 pos_diff=123.2 angle_diff=0.162
+oracle_t_agent=(166.6,69.6) oracle_t_block=(250.9,163.5) oracle_t_angle=0.587 
+[refine check 6] raw_norm_sum=(-2.806,-1.408) ref_norm_sum=(-0.443,-2.250) delta_norm=1.8539
+[action trace 6] macro_disp_px=(-13.3,-41.7) planner_macro_px=(-13.3,-41.7) expert_macro_px=(30.8,31.7) to_block=(-127.4,-82.5) agent_block_dist=151.8
+vel=(-8.1,-32.6)
+[time check 6] raw_range=[30:35] oracle_agent_now=(156.8,98.0) oracle_agent_next=(169.1,111.3) oracle_agent_disp=(12.3,13.3) expert_macro_disp=(30.8,31.7) planner_macro_disp=(-13.3,-41.7) oracle_block_disp=(0.0,0.0) oracle_angle_disp=0.000
+goal_block=(266.9,236.7,0.749) 
+[env step 6] agent=(373.9,228.4) block=(250.9,163.5) angle=0.587 agent_diff=92.1 block_diff=74.9 pos_diff=118.7 angle_diff=0.162
+oracle_t_agent=(156.8,98.0) oracle_t_block=(250.9,163.5) oracle_t_angle=0.587 
+[refine check 7] raw_norm_sum=(-2.488,0.547) ref_norm_sum=(-2.321,-1.010) delta_norm=2.4685
+[action trace 7] macro_disp_px=(-51.2,-16.8) planner_macro_px=(-51.2,-16.8) expert_macro_px=(27.6,26.9) to_block=(-122.9,-64.9) agent_block_dist=139.0
+vel=(-38.8,-10.5)
+[time check 7] raw_range=[35:40] oracle_agent_now=(169.1,111.3) oracle_agent_next=(181.0,122.6) oracle_agent_disp=(11.9,11.4) expert_macro_disp=(27.6,26.9) planner_macro_disp=(-51.2,-16.8) oracle_block_disp=(0.0,0.0) oracle_angle_disp=0.000
+goal_block=(266.9,236.7,0.749) 
+[env step 7] agent=(352.0,223.7) block=(250.9,163.5) angle=0.587 agent_diff=70.5 block_diff=74.9 pos_diff=102.9 angle_diff=0.162
+oracle_t_agent=(169.1,111.3) oracle_t_block=(250.9,163.5) oracle_t_angle=0.587 
+[refine check 8] raw_norm_sum=(-1.403,-0.439) ref_norm_sum=(-0.401,-0.569) delta_norm=1.4085
+[action trace 8] macro_disp_px=(-12.4,-8.0) planner_macro_px=(-12.4,-8.0) expert_macro_px=(20.8,54.4) to_block=(-101.1,-60.2) agent_block_dist=117.7
+vel=(-3.9,-84.3)
+[time check 8] raw_range=[40:45] oracle_agent_now=(181.0,122.6) oracle_agent_next=(189.1,143.7) oracle_agent_disp=(8.2,21.0) expert_macro_disp=(20.8,54.4) planner_macro_disp=(-12.4,-8.0) oracle_block_disp=(11.6,8.6) oracle_angle_disp=0.096
+goal_block=(266.9,236.7,0.749) 
+[env step 8] agent=(347.5,218.5) block=(250.9,163.5) angle=0.587 agent_diff=66.7 block_diff=74.9 pos_diff=100.3 angle_diff=0.162
+oracle_t_agent=(181.0,122.6) oracle_t_block=(250.9,163.5) oracle_t_angle=0.587 
+[refine check 9] raw_norm_sum=(-0.807,0.131) ref_norm_sum=(-0.847,-1.406) delta_norm=1.9678
+[action trace 9] macro_disp_px=(-21.5,-24.7) planner_macro_px=(-21.5,-24.7) expert_macro_px=(13.3,34.2) to_block=(-96.6,-55.0) agent_block_dist=111.1
+vel=(-22.9,-16.7)
+[time check 9] raw_range=[45:50] oracle_agent_now=(189.1,143.7) oracle_agent_next=(194.9,158.6) oracle_agent_disp=(5.7,15.0) expert_macro_disp=(13.3,34.2) planner_macro_disp=(-21.5,-24.7) oracle_block_disp=(11.3,8.3) oracle_angle_disp=0.081
+goal_block=(266.9,236.7,0.749) 
+[env step 9] agent=(337.7,210.2) block=(250.9,163.5) angle=0.587 agent_diff=59.4 block_diff=74.9 pos_diff=95.6 angle_diff=0.162
+oracle_t_agent=(189.1,143.7) oracle_t_block=(262.5,172.1) oracle_t_angle=0.682 
+[mpc step 10] solver diagnostics: {'video_loss': 0.44036251306533813, 'goal_loss': 0.1926877796649933, 'action_loss': 53.521209716796875, 'rho': 1000.0, 'residual_norm': 14.642132759094238}(planner DEBUG)
+[refine check 10] raw_norm_sum=(-1.191,-0.749) ref_norm_sum=(-2.252,-3.160) delta_norm=1.9834
+[action trace 10] macro_disp_px=(-49.8,-59.9) planner_macro_px=(-49.8,-59.9) expert_macro_px=(12.6,0.7) to_block=(-86.8,-46.7) agent_block_dist=98.6
+vel=(12.3,-77.6)
+[time check 10] raw_range=[50:55] oracle_agent_now=(194.9,158.6) oracle_agent_next=(199.9,158.6) oracle_agent_disp=(5.0,-0.0) expert_macro_disp=(12.6,0.7) planner_macro_disp=(-49.8,-59.9) oracle_block_disp=(4.0,1.6) oracle_angle_disp=0.044
+goal_block=(266.9,236.7,0.749) 
+[env step 10] agent=(319.0,187.3) block=(250.9,163.5) angle=0.587 agent_diff=56.7 block_diff=74.9 pos_diff=94.0 angle_diff=0.162
+oracle_t_agent=(194.9,158.6) oracle_t_block=(273.8,180.4) oracle_t_angle=0.763 
+[refine check 11] raw_norm_sum=(-1.154,-0.146) ref_norm_sum=(-2.602,-0.029) delta_norm=1.6975
+[action trace 11] macro_disp_px=(-56.9,2.8) planner_macro_px=(-56.9,2.8) expert_macro_px=(53.6,97.1) to_block=(-68.1,-23.8) agent_block_dist=72.1
+vel=(-39.3,-125.7)
+[time check 11] raw_range=[55:60] oracle_agent_now=(199.9,158.6) oracle_agent_next=(221.3,197.3) oracle_agent_disp=(21.4,38.7) expert_macro_disp=(53.6,97.1) planner_macro_disp=(-56.9,2.8) oracle_block_disp=(2.7,1.4) oracle_angle_disp=0.020
+goal_block=(266.9,236.7,0.749) 
+[env step 11] agent=(295.4,182.3) block=(250.9,167.5) angle=0.636 agent_diff=49.7 block_diff=71.0 pos_diff=86.7 angle_diff=0.112
+oracle_t_agent=(199.9,158.6) oracle_t_block=(277.9,182.0) oracle_t_angle=0.807 
+[refine check 12] raw_norm_sum=(-0.313,2.340) ref_norm_sum=(0.834,-1.916) delta_norm=2.5453
+[action trace 12] macro_disp_px=(12.5,-35.0) planner_macro_px=(12.5,-35.0) expert_macro_px=(9.5,24.1) to_block=(-44.6,-14.8) agent_block_dist=47.0
+vel=(-26.1,79.7)
+[time check 12] raw_range=[60:65] oracle_agent_now=(221.3,197.3) oracle_agent_next=(225.9,208.4) oracle_agent_disp=(4.6,11.1) expert_macro_disp=(9.5,24.1) planner_macro_disp=(12.5,-35.0) oracle_block_disp=(6.5,6.8) oracle_angle_disp=-0.034
+goal_block=(266.9,236.7,0.749) 
+[env step 12] agent=(300.6,170.8) block=(250.8,168.6) angle=0.650 agent_diff=62.3 block_diff=69.9 pos_diff=93.7 angle_diff=0.099
+oracle_t_agent=(221.3,197.3) oracle_t_block=(280.5,183.4) oracle_t_angle=0.828 
+[refine check 13] raw_norm_sum=(0.035,-0.263) ref_norm_sum=(0.266,-1.200) delta_norm=1.7189
+[action trace 13] macro_disp_px=(1.0,-20.6) planner_macro_px=(1.0,-20.6) expert_macro_px=(11.1,21.8) to_block=(-49.8,-2.1) agent_block_dist=49.9
+vel=(-30.4,-9.5)
+[time check 13] raw_range=[65:70] oracle_agent_now=(225.9,208.4) oracle_agent_next=(230.1,217.1) oracle_agent_disp=(4.2,8.6) expert_macro_disp=(11.1,21.8) planner_macro_disp=(1.0,-20.6) oracle_block_disp=(5.0,4.9) oracle_angle_disp=-0.036
+goal_block=(266.9,236.7,0.749) 
+[env step 13] agent=(297.7,161.7) block=(250.8,168.6) angle=0.650 agent_diff=70.3 block_diff=69.9 pos_diff=99.1 angle_diff=0.099
+oracle_t_agent=(225.9,208.4) oracle_t_block=(287.0,190.2) oracle_t_angle=0.794 
+[refine check 14] raw_norm_sum=(0.026,1.148) ref_norm_sum=(-1.160,0.572) delta_norm=1.3487
+[action trace 14] macro_disp_px=(-27.8,14.8) planner_macro_px=(-27.8,14.8) expert_macro_px=(13.1,16.0) to_block=(-46.9,6.9) agent_block_dist=47.4
+vel=(82.3,12.8)
+[time check 14] raw_range=[70:75] oracle_agent_now=(230.1,217.1) oracle_agent_next=(235.7,223.9) oracle_agent_disp=(5.6,6.9) expert_macro_disp=(13.1,16.0) planner_macro_disp=(-27.8,14.8) oracle_block_disp=(4.9,4.5) oracle_angle_disp=-0.038
+goal_block=(266.9,236.7,0.749) 
+[env step 14] agent=(289.8,167.5) block=(250.8,168.6) angle=0.650 agent_diff=63.2 block_diff=69.9 pos_diff=94.3 angle_diff=0.099
+oracle_t_agent=(230.1,217.1) oracle_t_block=(292.0,195.1) oracle_t_angle=0.758 
+[refine check 15] raw_norm_sum=(-0.572,0.342) ref_norm_sum=(-1.558,-0.989) delta_norm=1.5476
+[action trace 15] macro_disp_px=(-35.8,-16.4) planner_macro_px=(-35.8,-16.4) expert_macro_px=(-112.0,-42.6) to_block=(-39.0,1.2) agent_block_dist=39.0
+vel=(-30.8,22.4)
+[time check 15] raw_range=[75:80] oracle_agent_now=(235.7,223.9) oracle_agent_next=(194.5,210.2) oracle_agent_disp=(-41.1,-13.7) expert_macro_disp=(-112.0,-42.6) planner_macro_disp=(-35.8,-16.4) oracle_block_disp=(0.3,0.3) oracle_angle_disp=-0.002
+goal_block=(266.9,236.7,0.749) 
+[env step 15] agent=(277.4,162.2) block=(250.8,168.6) angle=0.650 agent_diff=68.1 block_diff=69.9 pos_diff=97.6 angle_diff=0.099
+oracle_t_agent=(235.7,223.9) oracle_t_block=(296.9,199.6) oracle_t_angle=0.720 
+[refine check 16] raw_norm_sum=(-1.211,0.356) ref_norm_sum=(-1.970,1.145) delta_norm=1.5329
+[action trace 16] macro_disp_px=(-44.1,26.3) planner_macro_px=(-44.1,26.3) expert_macro_px=(-2.2,-165.4) to_block=(-26.5,6.4) agent_block_dist=27.3
+vel=(-103.5,-24.2)
+[time check 16] raw_range=[80:85] oracle_agent_now=(194.5,210.2) oracle_agent_next=(186.7,143.4) oracle_agent_disp=(-7.8,-66.9) expert_macro_disp=(-2.2,-165.4) planner_macro_disp=(-44.1,26.3) oracle_block_disp=(0.0,0.0) oracle_angle_disp=0.000
+goal_block=(266.9,236.7,0.749) 
+[env step 16] agent=(257.1,170.3) block=(244.0,178.7) angle=0.669 agent_diff=64.8 block_diff=62.3 pos_diff=89.9 angle_diff=0.080
+oracle_t_agent=(194.5,210.2) oracle_t_block=(297.2,199.8) oracle_t_angle=0.718 
+[refine check 17] raw_norm_sum=(0.595,-0.844) ref_norm_sum=(0.403,1.631) delta_norm=1.8906
+[action trace 17] macro_disp_px=(3.8,36.1) planner_macro_px=(3.8,36.1) expert_macro_px=(150.7,-145.5) to_block=(-13.0,8.5) agent_block_dist=15.6
+vel=(-24.7,63.8)
+[time check 17] raw_range=[85:90] oracle_agent_now=(186.7,143.4) oracle_agent_next=(247.5,82.4) oracle_agent_disp=(60.8,-61.0) expert_macro_disp=(150.7,-145.5) planner_macro_disp=(3.8,36.1) oracle_block_disp=(0.0,0.0) oracle_angle_disp=0.000
+goal_block=(266.9,236.7,0.749) 
+[env step 17] agent=(256.3,184.6) block=(237.5,188.5) angle=0.692 agent_diff=52.2 block_diff=56.4 pos_diff=76.9 angle_diff=0.057
+oracle_t_agent=(186.7,143.4) oracle_t_block=(297.2,199.8) oracle_t_angle=0.718 
+[refine check 18] raw_norm_sum=(0.352,-1.580) ref_norm_sum=(-1.932,-1.163) delta_norm=1.3975
+[action trace 18] macro_disp_px=(-43.3,-19.9) planner_macro_px=(-43.3,-19.9) expert_macro_px=(75.7,48.5) to_block=(-18.8,3.9) agent_block_dist=19.2
+vel=(54.5,75.6)
+[time check 18] raw_range=[90:95] oracle_agent_now=(247.5,82.4) oracle_agent_next=(280.9,97.1) oracle_agent_disp=(33.5,14.8) expert_macro_disp=(75.7,48.5) planner_macro_disp=(-43.3,-19.9) oracle_block_disp=(0.0,0.0) oracle_angle_disp=0.000
+goal_block=(266.9,236.7,0.749) 
+[env step 18] agent=(240.4,177.5) block=(234.6,191.9) angle=0.690 agent_diff=67.0 block_diff=55.3 pos_diff=86.8 angle_diff=0.059
+oracle_t_agent=(247.5,82.4) oracle_t_block=(297.2,199.8) oracle_t_angle=0.718 
+[refine check 19] raw_norm_sum=(0.719,-0.379) ref_norm_sum=(0.263,-2.188) delta_norm=2.4359
+[action trace 19] macro_disp_px=(1.0,-40.4) planner_macro_px=(1.0,-40.4) expert_macro_px=(33.3,96.1) to_block=(-5.8,14.3) agent_block_dist=15.5
+vel=(-4.3,41.2)
+[time check 19] raw_range=[95:100] oracle_agent_now=(280.9,97.1) oracle_agent_next=(294.0,136.9) oracle_agent_disp=(13.1,39.8) expert_macro_disp=(33.3,96.1) planner_macro_disp=(1.0,-40.4) oracle_block_disp=(0.0,0.0) oracle_angle_disp=0.000
+goal_block=(266.9,236.7,0.749) 
+[env step 19] agent=(242.4,160.3) block=(234.3,192.1) angle=0.689 agent_diff=80.2 block_diff=55.2 pos_diff=97.4 angle_diff=0.059
+oracle_t_agent=(280.9,97.1) oracle_t_block=(297.2,199.8) oracle_t_angle=0.718 
+[mpc step 20] solver diagnostics: {'video_loss': 0.22935599088668823, 'goal_loss': 0.2604232430458069, 'action_loss': 19.28911781311035, 'rho': 1000.0, 'residual_norm': 33.17641830444336}(planner DEBUG)
+[refine check 20] raw_norm_sum=(0.041,0.672) ref_norm_sum=(1.599,0.312) delta_norm=1.6596
+[action trace 20] macro_disp_px=(27.9,9.6) planner_macro_px=(27.9,9.6) expert_macro_px=(30.2,68.2) to_block=(-8.1,31.9) agent_block_dist=32.9
+vel=(-59.8,68.6)
+[time check 20] raw_range=[100:105] oracle_agent_now=(294.0,136.9) oracle_agent_next=(306.8,166.1) oracle_agent_disp=(12.7,29.2) expert_macro_disp=(30.2,68.2) planner_macro_disp=(27.9,9.6) oracle_block_disp=(0.0,0.0) oracle_angle_disp=0.000
+goal_block=(266.9,236.7,0.749) 
+[env step 20] agent=(252.0,163.8) block=(234.3,192.1) angle=0.689 agent_diff=72.7 block_diff=55.2 pos_diff=91.3 angle_diff=0.059
+oracle_t_agent=(294.0,136.9) oracle_t_block=(297.2,199.8) oracle_t_angle=0.718 
+[refine check 21] raw_norm_sum=(-0.508,0.087) ref_norm_sum=(-1.748,-0.344) delta_norm=1.7042
+[action trace 21] macro_disp_px=(-39.6,-3.5) planner_macro_px=(-39.6,-3.5) expert_macro_px=(-12.5,50.1) to_block=(-17.7,28.3) agent_block_dist=33.3
+vel=(-0.4,79.9)
+[time check 21] raw_range=[105:110] oracle_agent_now=(306.8,166.1) oracle_agent_next=(303.0,185.5) oracle_agent_disp=(-3.8,19.3) expert_macro_disp=(-12.5,50.1) planner_macro_disp=(-39.6,-3.5) oracle_block_disp=(0.0,0.0) oracle_angle_disp=0.000
+goal_block=(266.9,236.7,0.749) 
+[env step 21] agent=(234.4,162.9) block=(234.3,192.1) angle=0.689 agent_diff=82.2 block_diff=55.2 pos_diff=99.0 angle_diff=0.059
+oracle_t_agent=(306.8,166.1) oracle_t_block=(297.2,199.8) oracle_t_angle=0.718 
+[refine check 22] raw_norm_sum=(0.155,0.001) ref_norm_sum=(0.779,-1.186) delta_norm=2.0395
+[action trace 22] macro_disp_px=(11.4,-20.4) planner_macro_px=(11.4,-20.4) expert_macro_px=(-20.9,45.4) to_block=(-0.1,29.2) agent_block_dist=29.2
+vel=(48.1,63.6)
+[time check 22] raw_range=[110:115] oracle_agent_now=(303.0,185.5) oracle_agent_next=(293.8,205.1) oracle_agent_disp=(-9.2,19.6) expert_macro_disp=(-20.9,45.4) planner_macro_disp=(11.4,-20.4) oracle_block_disp=(-14.2,15.7) oracle_angle_disp=-0.013
+goal_block=(266.9,236.7,0.749) 
+[env step 22] agent=(241.5,156.0) block=(234.3,192.1) angle=0.689 agent_diff=84.4 block_diff=55.2 pos_diff=100.8 angle_diff=0.059
+oracle_t_agent=(303.0,185.5) oracle_t_block=(297.2,199.8) oracle_t_angle=0.718 
+[refine check 23] raw_norm_sum=(-0.199,0.965) ref_norm_sum=(0.944,1.172) delta_norm=1.6954
+[action trace 23] macro_disp_px=(14.7,26.9) planner_macro_px=(14.7,26.9) expert_macro_px=(-8.6,25.6) to_block=(-7.1,36.1) agent_block_dist=36.8
+vel=(-32.7,17.1)
+[time check 23] raw_range=[115:120] oracle_agent_now=(293.8,205.1) oracle_agent_next=(290.4,215.8) oracle_agent_disp=(-3.4,10.7) expert_macro_disp=(-8.6,25.6) planner_macro_disp=(14.7,26.9) oracle_block_disp=(-6.3,8.2) oracle_angle_disp=0.013
+goal_block=(266.9,236.7,0.749) 
+[env step 23] agent=(246.6,166.8) block=(234.3,192.1) angle=0.689 agent_diff=72.4 block_diff=55.2 pos_diff=91.1 angle_diff=0.059
+oracle_t_agent=(293.8,205.1) oracle_t_block=(283.0,215.5) oracle_t_angle=0.705 
+[mpc step 24] solver diagnostics: {'video_loss': 0.0, 'goal_loss': 0.5705306529998779, 'action_loss': 6.408252239227295, 'rho': 1000.0, 'residual_norm': 0.9208299517631531}(planner DEBUG)
+[refine check 24] raw_norm_sum=(3.926,3.983) ref_norm_sum=(4.867,7.995) delta_norm=3.1008
+[action trace 24] macro_disp_px=(93.9,163.5) planner_macro_px=(93.9,163.5) expert_macro_px=(-21.8,36.3) to_block=(-12.2,25.3) agent_block_dist=28.1
+vel=(-3.7,20.5)
+[time check 24] raw_range=[120:125] oracle_agent_now=(290.4,215.8) oracle_agent_next=(281.8,230.1) oracle_agent_disp=(-8.6,14.3) expert_macro_disp=(-21.8,36.3) planner_macro_disp=(93.9,163.5) oracle_block_disp=(-9.8,12.9) oracle_angle_disp=0.031
+goal_block=(266.9,236.7,0.749) 
+[env step 24] agent=(281.0,231.3) block=(230.4,203.1) angle=0.785 agent_diff=1.4 block_diff=49.6 pos_diff=49.7 angle_diff=0.037
+oracle_t_agent=(290.4,215.8) oracle_t_block=(276.7,223.7) oracle_t_angle=0.718 
+ALM planner finished
+first planner macro (normalized): tensor([[-1.2512, -0.9606],
+        [-0.8569, -0.7364],
+        [-0.3269,  0.2267],
+        [ 0.1988, -1.3964],
+        [-0.4791, -0.3434]])
+first planner macro (raw env scale): tensor([[-26.1313, -18.5511],
+        [-18.1701, -14.0634],
+        [ -7.4691,   5.2189],
+        [  3.1435, -27.2754],
+        [-10.5437,  -6.1956]])
+first 5 expert actions: tensor([[405., 411.],
+        [413., 398.],
+        [413., 395.],
+        [413., 392.],
+        [413., 376.]])
+first 5 expert relative actions (normalized): tensor([[-1.2942,  0.6154],
+        [-0.5026, -0.2260],
+        [-0.1915, -0.3918],
+        [-0.0620, -0.4138],
+        [-0.0050, -1.0608]])
+eval metrics: {'success': False, 'state_dist': 160.01974632769247}
+agent position: Vec2d(281.0468502449773, 231.2896343283227)
+agent velocity: Vec2d(122.41450152570519, 90.12524181207021)
+block position: Vec2d(230.37363182355492, 203.07339066701053)
+block angle: 0.7852954689382392
+agent_diff: 1.3676467537140318
+block_diff: 49.64571009668917
+pos_diff: 49.66454458310727
+angle_diff: 0.03664076328277588
+vel_diff: 152.11755613204568
+success thresholds: pos_diff < 20, angle_diff < pi/9 = 0.3490658503988659
+[ep 15] split=val horizon=25 success=False state_dist=160.02 dyn_residual=0.9208
+
+=== Evaluation Summary ===
+{'episode_idx': 15, 'split': 'val', 'success': False, 'state_dist': 160.01974632769247, 'dynamics_residual': 0.9208299517631531, 'executed_actions': 25, 'planning_horizon': 25}
+Success rate: 0.000  mean_state_dist: 160.02  mean_dyn_res: 0.9208
