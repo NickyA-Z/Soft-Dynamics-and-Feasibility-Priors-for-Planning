@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import random
 import sys
 from pathlib import Path
 
@@ -40,6 +41,42 @@ MODEL_NAME = "wall_single"
 DEFAULT_HORIZON = 25
 DEFAULT_SPLIT = "all"
 DEFAULT_NUM_EPISODES = 50
+
+
+def parse_episode_specs(value: str) -> list[tuple[int, int]]:
+    specs = []
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if ":" in item:
+            episode_text, offset_text = item.split(":", 1)
+            specs.append((int(episode_text), int(offset_text)))
+        else:
+            specs.append((int(item), 0))
+    return specs
+
+
+def sample_wall_segment_specs(
+    data_dir: Path,
+    horizon: int,
+    frame_skip: int,
+    num_segments: int,
+    seed: int,
+    start_index: int = 0,
+) -> list[tuple[int, int]]:
+    states = torch.load(data_dir / "states.pth")
+    required_frames = horizon * frame_skip + 1
+    rng = random.Random(seed)
+    sampled = []
+    total_needed = start_index + num_segments
+    while len(sampled) < total_needed:
+        episode_idx = rng.randint(0, int(states.shape[0]) - 1)
+        max_offset = int(states.shape[1]) - required_frames
+        if max_offset < 0:
+            continue
+        sampled.append((episode_idx, rng.randint(0, max_offset)))
+    return sampled[start_index:total_needed]
 
 
 def to_runtime_observation(
@@ -193,6 +230,7 @@ def _current_wall_state(env: gym.Env) -> np.ndarray:
 
 def evaluate_episode(
     episode_idx: int,
+    start_offset: int,
     split: str,
     horizon: int,
     frame_skip: int,
@@ -211,6 +249,7 @@ def evaluate_episode(
     refinement_samples: int = 500,
     refinement_variance: float = 0.3,
     disable_refinement: bool = False,
+    visual_only_guidance: bool = False,
     diagnostic_inner_interval: int | None = None,
     diagnostic_outer: bool = False,
     allow_scale_mismatch: bool = False,
@@ -225,10 +264,15 @@ def evaluate_episode(
     if model is None or model_cfg is None:
         model, model_cfg = load_model_once(device)
 
-    torch.manual_seed(episode_idx)
+    torch.manual_seed(episode_idx * 100_000 + start_offset)
 
     episode = load_wall_oracle_episode(data_dir, episode_idx, stats=stats)
-    episode = slice_wall_oracle_episode(episode, horizon=horizon, frame_skip=frame_skip)
+    episode = slice_wall_oracle_episode(
+        episode,
+        horizon=horizon,
+        frame_skip=frame_skip,
+        start_offset=start_offset,
+    )
 
     env = gym.make(model_cfg.env.name, *model_cfg.env.args, **model_cfg.env.kwargs)
     _prepare_wall_env(env, episode, episode_idx)
@@ -267,9 +311,10 @@ def evaluate_episode(
     action_low = episode["action_low"].to(device=device, dtype=torch.float32).repeat(action_repeat)
     action_high = episode["action_high"].to(device=device, dtype=torch.float32).repeat(action_repeat)
 
-    DinoWorldModelAdapter.initialize_latents_from_video = _oracle_initialize_latents_from_video
-    DinoWorldModelAdapter.video_alignment_loss = _oracle_video_alignment_loss
-    DinoWorldModelAdapter.goal_loss = _oracle_goal_loss
+    if not visual_only_guidance:
+        DinoWorldModelAdapter.initialize_latents_from_video = _oracle_initialize_latents_from_video
+        DinoWorldModelAdapter.video_alignment_loss = _oracle_video_alignment_loss
+        DinoWorldModelAdapter.goal_loss = _oracle_goal_loss
 
     world_model = DinoWorldModelAdapter(
         world_model=model,
@@ -309,6 +354,7 @@ def evaluate_episode(
         f"residual_reduction={planner.config.alm.residual_reduction}, "
         f"fix_states_to_video={planner.config.alm.fix_states_to_video}, "
         f"action_reparam={planner.config.alm.use_action_reparameterization}, "
+        f"visual_only_guidance={visual_only_guidance}, "
         f"refinement={'off' if disable_refinement else f'{refinement_samples}x{refinement_variance}'})"
     )
 
@@ -466,13 +512,14 @@ def evaluate_episode(
     print("success threshold: state_dist < 4.5")
     print(
         f"[wall ep {episode_idx}] split={split} horizon={horizon} "
-        f"raw_horizon={paper_horizon} frame_skip={frame_skip} "
+        f"raw_horizon={paper_horizon} frame_skip={frame_skip} offset={start_offset} "
         f"success={metrics['success']} state_dist={metrics['state_dist']:.2f} "
         f"dyn_residual={result.steps[-1].dynamics_residual_norm:.4f}"
     )
 
     return {
         "episode_idx": episode_idx,
+        "start_offset": int(start_offset),
         "split": split,
         "success": bool(metrics["success"]),
         "state_dist": float(metrics["state_dist"]),
@@ -493,6 +540,17 @@ def parse_args():
     parser.add_argument("--start-index", type=int, default=0, help="Start offset inside the eligible episode list")
     parser.add_argument("--num-episodes", type=int, default=DEFAULT_NUM_EPISODES, help="Number of eligible episodes to evaluate")
     parser.add_argument("--episode-ids", default=None, help="Comma-separated explicit episode ids to evaluate")
+    parser.add_argument(
+        "--episode-specs",
+        default=None,
+        help="Comma-separated episode[:offset] specs. Overrides --episode-ids when provided.",
+    )
+    parser.add_argument(
+        "--sample-targets",
+        action="store_true",
+        help="Sample DINO-WM-style trajectory segments with replacement instead of using offset 0.",
+    )
+    parser.add_argument("--sample-seed", type=int, default=99, help="Seed for --sample-targets segment sampling")
     parser.add_argument("--model-name", default=MODEL_NAME, help="Checkpoint folder under dino_wm/checkpoints/outputs")
     parser.add_argument("--data-root", default=str(DATA_ROOT), help="Wall dataset directory")
     parser.add_argument("--inner-steps", type=int, default=25, help="ALM inner optimizer steps")
@@ -525,6 +583,11 @@ def parse_args():
     parser.add_argument("--refinement-samples", type=int, default=500, help="Number of random refinement samples")
     parser.add_argument("--refinement-variance", type=float, default=0.3, help="Refinement noise variance")
     parser.add_argument("--disable-refinement", action="store_true", help="Disable random action refinement")
+    parser.add_argument(
+        "--visual-only-guidance",
+        action="store_true",
+        help="Use visual-only video/goal losses and keep nonvisual latents at the current-state prior.",
+    )
     parser.add_argument("--quick", action="store_true", help="Use small ALM/refinement settings for smoke tests")
     parser.add_argument("--allow-scale-mismatch", action="store_true", help="Allow action_repeat != frame_skip for diagnostics only")
     parser.add_argument("--debug-inner-every", type=int, default=None, help="Print ALM diagnostics every N inner iterations")
@@ -556,10 +619,24 @@ def main():
     data_dir = resolve_wall_data_dir(args.data_root, args.split)
     stats = compute_wall_stats(data_dir)
     eligible = candidate_wall_episodes(data_dir, horizon=macro_horizon, frame_skip=frame_skip)
-    if args.episode_ids:
-        eval_episodes = [int(item) for item in args.episode_ids.split(",") if item.strip()]
+    if args.episode_specs:
+        eval_specs = parse_episode_specs(args.episode_specs)
+    elif args.sample_targets:
+        eval_specs = sample_wall_segment_specs(
+            data_dir,
+            horizon=macro_horizon,
+            frame_skip=frame_skip,
+            num_segments=args.num_episodes,
+            seed=args.sample_seed,
+            start_index=args.start_index,
+        )
+    elif args.episode_ids:
+        eval_specs = [(int(item), 0) for item in args.episode_ids.split(",") if item.strip()]
     else:
-        eval_episodes = eligible[args.start_index : args.start_index + args.num_episodes]
+        eval_specs = [
+            (idx, 0)
+            for idx in eligible[args.start_index : args.start_index + args.num_episodes]
+        ]
 
     inner_steps = 3 if args.quick else args.inner_steps
     outer_steps = 2 if args.quick else args.outer_steps
@@ -571,15 +648,16 @@ def main():
         f"macro_horizon={macro_horizon} raw_horizon={paper_horizon} frame_skip={frame_skip}"
     )
     print(f"Eligible episodes: {len(eligible)}")
-    print(f"Selected episode ids: {eval_episodes}")
+    print(f"Selected episode specs: {eval_specs}")
 
     results = []
-    for idx in eval_episodes:
-        print(f"\n=== Wall Episode {idx} ===")
+    for idx, start_offset in eval_specs:
+        print(f"\n=== Wall Episode {idx} offset {start_offset} ===")
         try:
             results.append(
                 evaluate_episode(
                     episode_idx=idx,
+                    start_offset=start_offset,
                     split=args.split,
                     horizon=macro_horizon,
                     frame_skip=frame_skip,
@@ -598,6 +676,7 @@ def main():
                     refinement_samples=refinement_samples,
                     refinement_variance=args.refinement_variance,
                     disable_refinement=disable_refinement,
+                    visual_only_guidance=args.visual_only_guidance,
                     diagnostic_inner_interval=args.debug_inner_every,
                     diagnostic_outer=args.debug_outer,
                     allow_scale_mismatch=args.allow_scale_mismatch,

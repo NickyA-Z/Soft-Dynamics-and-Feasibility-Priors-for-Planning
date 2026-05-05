@@ -78,7 +78,7 @@ def center_square_to_tensor(frame: np.ndarray, task: str, image_size: int = 224)
         mode="bilinear",
         align_corners=False,
     ).squeeze(0)
-    if task == "wall":
+    if task in {"wall", "pusht"}:
         tensor = (tensor - 0.5) / 0.5
     return tensor
 

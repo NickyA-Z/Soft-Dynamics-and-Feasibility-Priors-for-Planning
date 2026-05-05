@@ -5,7 +5,6 @@ import torch
 from .config import ALMConfig
 from .interfaces import CollocationResult, WorldModelAdapter
 from .losses import squared_norm
-from .utils import ensure_history_length
 
 
 class LatentCollocationSolver:
@@ -86,29 +85,21 @@ class LatentCollocationSolver:
         candidate_latents: torch.Tensor,
         candidate_actions: torch.Tensor,
     ) -> torch.Tensor:
-        history = ensure_history_length(
-            latent_context,
-            self.world_model.history_length,
-            pad_mode="repeat_first",
-        )
-        if self.world_model.history_length > 1:
-            action_context = ensure_history_length(
-                past_action_context,
-                self.world_model.history_length - 1,
-                pad_mode="zeros",
-            )
-        else:
-            action_context = candidate_actions.new_zeros((0, self.world_model.action_dim))
-
         residuals = []
         for index in range(candidate_actions.shape[0]):
-            state_window = torch.cat([history, candidate_latents[1 : index + 1]], dim=0)[
+            state_window = torch.cat([latent_context, candidate_latents[1 : index + 1]], dim=0)[
                 -self.world_model.history_length :
             ]
             action_window = torch.cat(
-                [action_context, candidate_actions[: index + 1]],
+                [past_action_context, candidate_actions[: index + 1]],
                 dim=0,
-            )[-self.world_model.history_length :]
+            )[-state_window.shape[0] :]
+            if action_window.shape[0] != state_window.shape[0]:
+                raise ValueError(
+                    "Dynamics window misalignment: "
+                    f"state_window={state_window.shape[0]} action_window={action_window.shape[0]}. "
+                    "Provide one past action for each non-current latent context frame."
+                )
             predicted_next = self.world_model.predict_next_latent(state_window, action_window)
             residuals.append(candidate_latents[index + 1] - predicted_next)
         return torch.stack(residuals, dim=0)

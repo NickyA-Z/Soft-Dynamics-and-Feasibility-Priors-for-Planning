@@ -165,6 +165,25 @@ def test_rollout_action_T_equals_history_length():
         )
 
 
+def test_rollout_short_context_matches_dino_wm_growth():
+    """
+    DINO-WM's native rollout starts MPC from the actually available context and
+    lets the window grow to num_hist; it does not repeat the first frame to fill
+    the history. This matters for PushT, where num_hist=3 but online planning
+    starts from a single observation.
+    """
+    adapter = make_adapter(history_length=3, action_dim=4)
+    fake_model = adapter.world_model
+
+    adapter.rollout(
+        latent_context=torch.zeros(1, 3, 4),
+        past_action_context=torch.zeros(0, 4),
+        planned_actions=torch.zeros(5, 4),
+    )
+
+    assert fake_model.action_T_recorded == [1, 2, 3, 3, 3]
+
+
 def test_rollout_output_shape_matches_horizon():
     """rollout returns initial frame + horizon predicted latents = horizon+1 total."""
     adapter = make_adapter(history_length=2, action_dim=4)

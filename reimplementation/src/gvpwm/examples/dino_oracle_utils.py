@@ -17,6 +17,7 @@ from datasets.pusht_dset import PROPRIO_MEAN, PROPRIO_STD
 
 def make_observation(frame, proprio):
     visual = torch.as_tensor(frame, dtype=torch.float32).permute(2, 0, 1) / 255.0
+    visual = (visual - 0.5) / 0.5
     proprio = torch.as_tensor(proprio, dtype=torch.float32)[..., :4]
     return {
         "visual": visual,
@@ -83,32 +84,38 @@ def slice_oracle_episode(
     episode: dict[str, Any],
     horizon: int,
     frame_skip: int,
+    start_offset: int = 0,
 ) -> dict[str, Any]:
     required_frames = horizon * frame_skip + 1
-    if episode["length"] < required_frames:
+    if start_offset < 0:
+        raise ValueError(f"start_offset must be non-negative, got {start_offset}.")
+    if episode["length"] < start_offset + required_frames:
         raise ValueError(
             f"Episode length {episode['length']} is too short for horizon={horizon} "
-            f"with frame_skip={frame_skip} (need {required_frames} frames)."
+            f"with frame_skip={frame_skip} and start_offset={start_offset} "
+            f"(need {start_offset + required_frames} frames)."
         )
 
-    effective_length = required_frames
-    macro_indices = list(range(0, effective_length, frame_skip))
+    start = int(start_offset)
+    stop = start + required_frames
+    macro_indices = list(range(0, required_frames, frame_skip))
 
     truncated = dict(episode)
-    full_video_plan = episode["video_plan"][:effective_length]
+    full_video_plan = episode["video_plan"][start:stop]
     macro_video_plan = [full_video_plan[i] for i in macro_indices]
     
     truncated["video_plan"] = macro_video_plan
     truncated["start_obs"] = full_video_plan[0]
     truncated["goal_obs"] = full_video_plan[-1]
-    truncated["actions"] = episode["actions"][: horizon * frame_skip]
-    truncated["rel_actions"] = episode["rel_actions"][: horizon * frame_skip]
-    truncated["states"] = episode["states"][:effective_length]
-    truncated["proprio"] = episode["proprio"][:effective_length]
-    truncated["velocities"] = episode["velocities"][:effective_length]
-    truncated["length"] = effective_length
+    truncated["actions"] = episode["actions"][start : start + horizon * frame_skip]
+    truncated["rel_actions"] = episode["rel_actions"][start : start + horizon * frame_skip]
+    truncated["states"] = episode["states"][start:stop]
+    truncated["proprio"] = episode["proprio"][start:stop]
+    truncated["velocities"] = episode["velocities"][start:stop]
+    truncated["length"] = required_frames
     truncated["planning_horizon"] = horizon
     truncated["frame_skip"] = frame_skip
+    truncated["start_offset"] = start
     return truncated
 
 

@@ -117,6 +117,7 @@ def main():
             results.append(
                 evaluate_episode(
                     episode_idx=idx,
+                    start_offset=0,
                     split=args.split,
                     horizon=args.horizon,
                     model=model,

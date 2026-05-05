@@ -131,20 +131,27 @@ def slice_wall_oracle_episode(
     episode: dict[str, Any],
     horizon: int,
     frame_skip: int,
+    start_offset: int = 0,
 ) -> dict[str, Any]:
     required_frames = horizon * frame_skip + 1
-    if episode["length"] < required_frames:
+    if start_offset < 0:
+        raise ValueError(f"start_offset must be non-negative, got {start_offset}.")
+    if episode["length"] < start_offset + required_frames:
         raise ValueError(
             f"Episode length {episode['length']} is too short for horizon={horizon} "
-            f"with frame_skip={frame_skip} (need {required_frames} frames)."
+            f"with frame_skip={frame_skip} and start_offset={start_offset} "
+            f"(need {start_offset + required_frames} frames)."
         )
-    if episode["actions"].shape[0] < horizon * frame_skip:
+    if episode["actions"].shape[0] < start_offset + horizon * frame_skip:
         raise ValueError(
-            f"Episode has only {episode['actions'].shape[0]} actions, need {horizon * frame_skip}."
+            f"Episode has only {episode['actions'].shape[0]} actions, "
+            f"need {start_offset + horizon * frame_skip}."
         )
 
+    start = int(start_offset)
+    stop = start + required_frames
     macro_indices = list(range(0, required_frames, frame_skip))
-    full_video_plan = episode["video_plan"][:required_frames]
+    full_video_plan = episode["video_plan"][start:stop]
     macro_video_plan = [full_video_plan[i] for i in macro_indices]
 
     truncated = dict(episode)
@@ -153,15 +160,18 @@ def slice_wall_oracle_episode(
     # Keep terminal proprio attached; the adapter's default goal loss is visual-only,
     # but this avoids fake zero-proprio if diagnostics or future losses use it.
     truncated["goal_obs"] = full_video_plan[-1]
-    truncated["actions"] = episode["actions"][: horizon * frame_skip]
-    truncated["actions_normalized"] = episode["actions_normalized"][: horizon * frame_skip]
-    truncated["states"] = episode["states"][:required_frames]
-    truncated["proprio"] = episode["proprio"][:required_frames]
-    truncated["door_locations"] = episode["door_locations"][:required_frames]
-    truncated["wall_locations"] = episode["wall_locations"][:required_frames]
+    truncated["actions"] = episode["actions"][start : start + horizon * frame_skip]
+    truncated["actions_normalized"] = episode["actions_normalized"][
+        start : start + horizon * frame_skip
+    ]
+    truncated["states"] = episode["states"][start:stop]
+    truncated["proprio"] = episode["proprio"][start:stop]
+    truncated["door_locations"] = episode["door_locations"][start:stop]
+    truncated["wall_locations"] = episode["wall_locations"][start:stop]
     truncated["length"] = required_frames
     truncated["planning_horizon"] = horizon
     truncated["frame_skip"] = frame_skip
+    truncated["start_offset"] = start
     return truncated
 
 

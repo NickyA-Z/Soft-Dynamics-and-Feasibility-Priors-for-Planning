@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import pickle
+import random
 import sys
 from pathlib import Path
 
@@ -25,7 +26,7 @@ if str(DINO_WM_ROOT) not in sys.path:
     sys.path.append(str(DINO_WM_ROOT))
 
 from plan import load_model
-from datasets.pusht_dset import ACTION_MEAN, ACTION_STD
+from datasets.pusht_dset import ACTION_MEAN, ACTION_STD, PROPRIO_MEAN, PROPRIO_STD
 
 
 DATA_ROOT = DINO_WM_ROOT / "data" / "pusht_noise"
@@ -38,9 +39,13 @@ DEFAULT_NUM_EPISODES = 50
 
 
 def to_runtime_observation(obs):
+    visual = torch.as_tensor(obs["visual"], dtype=torch.float32).permute(2, 0, 1) / 255.0
+    visual = (visual - 0.5) / 0.5
+    raw_proprio = torch.as_tensor(obs["proprio"], dtype=torch.float32)[..., :4]
+    proprio = (raw_proprio - PROPRIO_MEAN[:4]) / PROPRIO_STD[:4]
     return {
-        "visual": torch.as_tensor(obs["visual"], dtype=torch.float32).permute(2, 0, 1) / 255.0,
-        "proprio": torch.as_tensor(obs["proprio"], dtype=torch.float32)[..., :4],
+        "visual": visual,
+        "proprio": proprio,
     }
 
 
@@ -143,6 +148,43 @@ def candidate_episodes(split_dir: Path, horizon: int, frame_skip: int) -> list[i
     return [idx for idx, length in enumerate(seq_lengths) if int(length) >= min_required_length]
 
 
+def parse_episode_specs(value: str) -> list[tuple[int, int]]:
+    specs = []
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if ":" in item:
+            episode_text, offset_text = item.split(":", 1)
+            specs.append((int(episode_text), int(offset_text)))
+        else:
+            specs.append((int(item), 0))
+    return specs
+
+
+def sample_segment_specs(
+    split_dir: Path,
+    horizon: int,
+    frame_skip: int,
+    num_segments: int,
+    seed: int,
+    start_index: int = 0,
+) -> list[tuple[int, int]]:
+    with open(split_dir / "seq_lengths.pkl", "rb") as handle:
+        seq_lengths = [int(length) for length in pickle.load(handle)]
+    required_frames = horizon * frame_skip + 1
+    rng = random.Random(seed)
+    sampled = []
+    total_needed = start_index + num_segments
+    while len(sampled) < total_needed:
+        episode_idx = rng.randint(0, len(seq_lengths) - 1)
+        max_offset = seq_lengths[episode_idx] - required_frames
+        if max_offset < 0:
+            continue
+        sampled.append((episode_idx, rng.randint(0, max_offset)))
+    return sampled[start_index:total_needed]
+
+
 def _oracle_initialize_latents_from_video(
     self,
     current_latent: torch.Tensor,
@@ -161,6 +203,7 @@ def _oracle_goal_loss(self, latent, goal_latent):
 
 def evaluate_episode(
     episode_idx: int,
+    start_offset: int,
     split: str,
     horizon: int,
     frame_skip: int,
@@ -178,6 +221,7 @@ def evaluate_episode(
     refinement_variance: float = 0.3,
     disable_refinement: bool = False,
     expert_action_warmstart: bool = False,
+    visual_only_guidance: bool = False,
     diagnostic_inner_interval: int | None = None,
     diagnostic_outer: bool = False,
     model=None,
@@ -191,11 +235,16 @@ def evaluate_episode(
     if model is None or model_cfg is None:
         model, model_cfg = load_model_once(device)
 
-    torch.manual_seed(episode_idx)
+    torch.manual_seed(episode_idx * 100_000 + start_offset)
 
     split_dir = DATA_ROOT / split
     episode = load_oracle_episode(split_dir, episode_idx)
-    episode = slice_oracle_episode(episode, horizon=horizon, frame_skip=frame_skip)
+    episode = slice_oracle_episode(
+        episode,
+        horizon=horizon,
+        frame_skip=frame_skip,
+        start_offset=start_offset,
+    )
 
     env = gym.make(model_cfg.env.name, *model_cfg.env.args, **model_cfg.env.kwargs)
     reset_out = env.reset()
@@ -231,9 +280,10 @@ def evaluate_episode(
     action_low = primitive_low.repeat(action_repeat)
     action_high = primitive_high.repeat(action_repeat)
 
-    DinoWorldModelAdapter.initialize_latents_from_video = _oracle_initialize_latents_from_video
-    DinoWorldModelAdapter.video_alignment_loss = _oracle_video_alignment_loss
-    DinoWorldModelAdapter.goal_loss = _oracle_goal_loss
+    if not visual_only_guidance:
+        DinoWorldModelAdapter.initialize_latents_from_video = _oracle_initialize_latents_from_video
+        DinoWorldModelAdapter.video_alignment_loss = _oracle_video_alignment_loss
+        DinoWorldModelAdapter.goal_loss = _oracle_goal_loss
 
     world_model = DinoWorldModelAdapter(
         world_model=model,
@@ -273,6 +323,7 @@ def evaluate_episode(
         f"fix_states_to_video={planner.config.alm.fix_states_to_video}, "
         f"action_reparam={planner.config.alm.use_action_reparameterization}, "
         f"expert_action_warmstart={expert_action_warmstart}, "
+        f"visual_only_guidance={visual_only_guidance}, "
         f"refinement={'off' if disable_refinement else f'{refinement_samples}x{refinement_variance}'})"
     )
     initial_warm_start_actions = None
@@ -350,7 +401,7 @@ def evaluate_episode(
     
     print(
         f"[ep {episode_idx}] split={split} horizon={horizon} "
-        f"raw_horizon={paper_horizon} frame_skip={frame_skip} "
+        f"raw_horizon={paper_horizon} frame_skip={frame_skip} offset={start_offset} "
         f"success={block_success} block_diff={block_diff:.2f} "
         f"angle_diff={angle_diff:.3f} "
         f"dyn_residual={result.steps[-1].dynamics_residual_norm:.4f}"
@@ -358,6 +409,7 @@ def evaluate_episode(
 
     return {
         "episode_idx": episode_idx,
+        "start_offset": int(start_offset),
         "split": split,
         "success": bool(block_success),
         "state_dist": float(block_diff),
@@ -381,6 +433,17 @@ def parse_args():
     parser.add_argument("--start-index", type=int, default=0, help="Start offset inside the filtered eligible episode list")
     parser.add_argument("--num-episodes", type=int, default=DEFAULT_NUM_EPISODES, help="Number of filtered episodes to evaluate")
     parser.add_argument("--episode-ids", default=None, help="Comma-separated explicit episode ids to evaluate")
+    parser.add_argument(
+        "--episode-specs",
+        default=None,
+        help="Comma-separated episode[:offset] specs. Overrides --episode-ids when provided.",
+    )
+    parser.add_argument(
+        "--sample-targets",
+        action="store_true",
+        help="Sample DINO-WM-style trajectory segments with replacement instead of using offset 0.",
+    )
+    parser.add_argument("--sample-seed", type=int, default=99, help="Seed for --sample-targets segment sampling")
     parser.add_argument("--inner-steps", type=int, default=25, help="ALM inner optimizer steps")
     parser.add_argument("--outer-steps", type=int, default=25, help="ALM outer penalty updates")
     parser.add_argument("--lambda-action", type=float, default=None, help="Override ALM action regularization weight")
@@ -416,6 +479,11 @@ def parse_args():
         action="store_true",
         help="Diagnostic only: initialize the first MPC solve from dataset expert actions.",
     )
+    parser.add_argument(
+        "--visual-only-guidance",
+        action="store_true",
+        help="Use visual-only video/goal losses and keep nonvisual latents at the current-state prior.",
+    )
     parser.add_argument("--quick", action="store_true", help="Use small ALM/refinement settings for smoke tests")
     parser.add_argument("--debug-inner-every", type=int, default=None, help="Print ALM diagnostics every N inner iterations")
     parser.add_argument("--debug-outer", action="store_true", help="Print diagnostics after every ALM outer iteration")
@@ -442,10 +510,24 @@ def main():
 
     split_dir = DATA_ROOT / args.split
     eligible = candidate_episodes(split_dir, horizon=macro_horizon, frame_skip=frame_skip)
-    if args.episode_ids:
-        eval_episodes = [int(item) for item in args.episode_ids.split(",") if item.strip()]
+    if args.episode_specs:
+        eval_specs = parse_episode_specs(args.episode_specs)
+    elif args.sample_targets:
+        eval_specs = sample_segment_specs(
+            split_dir,
+            horizon=macro_horizon,
+            frame_skip=frame_skip,
+            num_segments=args.num_episodes,
+            seed=args.sample_seed,
+            start_index=args.start_index,
+        )
+    elif args.episode_ids:
+        eval_specs = [(int(item), 0) for item in args.episode_ids.split(",") if item.strip()]
     else:
-        eval_episodes = eligible[args.start_index : args.start_index + args.num_episodes]
+        eval_specs = [
+            (idx, 0)
+            for idx in eligible[args.start_index : args.start_index + args.num_episodes]
+        ]
 
     inner_steps = 3 if args.quick else args.inner_steps
     outer_steps = 2 if args.quick else args.outer_steps
@@ -457,15 +539,16 @@ def main():
         f"raw_horizon={paper_horizon} frame_skip={frame_skip}"
     )
     print(f"Eligible episodes: {len(eligible)}")
-    print(f"Selected episode ids: {eval_episodes}")
+    print(f"Selected episode specs: {eval_specs}")
 
     results = []
-    for idx in eval_episodes:
-        print(f"\n=== Episode {idx} ===")
+    for idx, start_offset in eval_specs:
+        print(f"\n=== Episode {idx} offset {start_offset} ===")
         try:
             results.append(
                 evaluate_episode(
                     episode_idx=idx,
+                    start_offset=start_offset,
                     split=args.split,
                     horizon=macro_horizon,
                     frame_skip=frame_skip,
@@ -483,6 +566,7 @@ def main():
                     refinement_variance=args.refinement_variance,
                     disable_refinement=disable_refinement,
                     expert_action_warmstart=args.expert_action_warmstart,
+                    visual_only_guidance=args.visual_only_guidance,
                     diagnostic_inner_interval=args.debug_inner_every,
                     diagnostic_outer=args.debug_outer,
                     model=model,

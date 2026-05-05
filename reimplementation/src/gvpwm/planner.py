@@ -9,7 +9,7 @@ from .config import PlannerConfig
 from .interfaces import MPCResult, MPCStepResult, VideoPlan, VideoPlanSource, WorldModelAdapter
 from .losses import goal_mse
 from .solver import LatentCollocationSolver
-from .utils import ensure_history_length, shift_action_warm_start, shift_latent_warm_start
+from .utils import shift_action_warm_start, shift_latent_warm_start
 from .video import temporal_resample_sequence
 
 
@@ -69,15 +69,12 @@ class GVPWMPlanner:
         warm_start_actions: torch.Tensor | None = None,
     ):
         latent_context = self.world_model.encode_sequence(observation_history).to(self.world_model.device)
-        latent_context = ensure_history_length(
-            latent_context,
-            self.world_model.history_length,
-            pad_mode="repeat_first",
-        )
+        latent_context = latent_context[-self.world_model.history_length :]
         goal_latent = self.world_model.encode_observation(goal_observation).to(self.world_model.device)
         if past_action_history is None:
+            context_action_len = max(latent_context.shape[0] - 1, 0)
             past_action_history = torch.zeros(
-                max(self.world_model.history_length - 1, 0),
+                context_action_len,
                 self.world_model.action_dim,
                 device=self.world_model.device,
             )
@@ -115,17 +112,14 @@ class GVPWMPlanner:
             )
 
         latent_context = self.world_model.encode_sequence(observation_history).to(self.world_model.device)
-        latent_context = ensure_history_length(
-            latent_context,
-            self.world_model.history_length,
-            pad_mode="repeat_first",
-        )
+        latent_context = latent_context[-self.world_model.history_length :]
         goal_latent = self.world_model.encode_observation(goal_observation).to(self.world_model.device)
         encoded_video = self._encode_video(video_plan, self.config.mpc.horizon)
 
         if past_action_history is None:
+            context_action_len = max(latent_context.shape[0] - 1, 0)
             past_action_history = torch.zeros(
-                max(self.world_model.history_length - 1, 0),
+                context_action_len,
                 self.world_model.action_dim,
                 device=self.world_model.device,
             )
