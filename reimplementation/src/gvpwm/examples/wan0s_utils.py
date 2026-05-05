@@ -99,6 +99,7 @@ def write_wan0s_case(
     output_dir: str | Path,
     task: str,
     episode_idx: int,
+    start_offset: int,
     start_visual: Any,
     goal_visual: Any,
     raw_horizon: int,
@@ -120,6 +121,7 @@ def write_wan0s_case(
     metadata = {
         "task": task,
         "episode_idx": int(episode_idx),
+        "start_offset": int(start_offset),
         "raw_horizon": int(raw_horizon),
         "frame_skip": int(frame_skip),
         "first_frame": str(first_frame),

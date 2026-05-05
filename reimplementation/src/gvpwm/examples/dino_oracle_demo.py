@@ -221,7 +221,7 @@ def evaluate_episode(
     refinement_variance: float = 0.3,
     disable_refinement: bool = False,
     expert_action_warmstart: bool = False,
-    visual_only_guidance: bool = False,
+    visual_only_guidance: bool = True,
     diagnostic_inner_interval: int | None = None,
     diagnostic_outer: bool = False,
     model=None,
@@ -281,6 +281,8 @@ def evaluate_episode(
     action_high = primitive_high.repeat(action_repeat)
 
     if not visual_only_guidance:
+        # Diagnostic upper bound only: this injects oracle proprio latents from
+        # the demonstration. Paper-faithful evaluation keeps guidance visual-only.
         DinoWorldModelAdapter.initialize_latents_from_video = _oracle_initialize_latents_from_video
         DinoWorldModelAdapter.video_alignment_loss = _oracle_video_alignment_loss
         DinoWorldModelAdapter.goal_loss = _oracle_goal_loss
@@ -482,7 +484,12 @@ def parse_args():
     parser.add_argument(
         "--visual-only-guidance",
         action="store_true",
-        help="Use visual-only video/goal losses and keep nonvisual latents at the current-state prior.",
+        help="Deprecated compatibility flag; visual-only guidance is now the default.",
+    )
+    parser.add_argument(
+        "--oracle-proprio-guidance",
+        action="store_true",
+        help="Diagnostic only: include oracle proprio latents in video/goal losses.",
     )
     parser.add_argument("--quick", action="store_true", help="Use small ALM/refinement settings for smoke tests")
     parser.add_argument("--debug-inner-every", type=int, default=None, help="Print ALM diagnostics every N inner iterations")
@@ -566,7 +573,7 @@ def main():
                     refinement_variance=args.refinement_variance,
                     disable_refinement=disable_refinement,
                     expert_action_warmstart=args.expert_action_warmstart,
-                    visual_only_guidance=args.visual_only_guidance,
+                    visual_only_guidance=args.visual_only_guidance or not args.oracle_proprio_guidance,
                     diagnostic_inner_interval=args.debug_inner_every,
                     diagnostic_outer=args.debug_outer,
                     model=model,

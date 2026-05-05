@@ -43,6 +43,26 @@ def _parse_episode_ids(value: str) -> list[int]:
     return [int(item) for item in value.split(",") if item.strip()]
 
 
+def _parse_episode_specs(value: str) -> list[tuple[int, int]]:
+    specs = []
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if ":" in item:
+            episode_text, offset_text = item.split(":", 1)
+            specs.append((int(episode_text), int(offset_text)))
+        else:
+            specs.append((int(item), 0))
+    return specs
+
+
+def _case_dir_name(episode_idx: int, start_offset: int) -> str:
+    if start_offset == 0:
+        return f"episode_{episode_idx:03d}"
+    return f"episode_{episode_idx:03d}_offset_{start_offset:03d}"
+
+
 def _prepare_wall_env(env: gym.Env, episode: dict[str, Any], episode_idx: int) -> None:
     env.unwrapped.update_env(episode["env_info"])
     init_state = episode["states"][0].detach().cpu().numpy()
@@ -55,20 +75,32 @@ def _current_wall_state(env: gym.Env) -> np.ndarray:
     return env.unwrapped.dot_position.detach().cpu().numpy().astype(np.float32)
 
 
-def _wall_episode_video_path(video_root: Path, episode_idx: int) -> Path:
-    return video_root / "wall" / f"episode_{episode_idx:03d}" / "wan0s.mp4"
+def _wall_episode_video_path(video_root: Path, episode_idx: int, start_offset: int) -> Path:
+    return video_root / "wall" / _case_dir_name(episode_idx, start_offset) / "wan0s.mp4"
 
 
-def _pusht_episode_video_path(video_root: Path, episode_idx: int) -> Path:
-    return video_root / "pusht" / f"episode_{episode_idx:03d}" / "wan0s.mp4"
+def _pusht_episode_video_path(video_root: Path, episode_idx: int, start_offset: int) -> Path:
+    return video_root / "pusht" / _case_dir_name(episode_idx, start_offset) / "wan0s.mp4"
 
 
-def evaluate_wall(args: argparse.Namespace, episode_idx: int, model, model_cfg, device: torch.device) -> dict:
+def evaluate_wall(
+    args: argparse.Namespace,
+    episode_idx: int,
+    start_offset: int,
+    model,
+    model_cfg,
+    device: torch.device,
+) -> dict:
     horizon = _macro_horizon(args.raw_horizon, args.frame_skip)
     data_dir = resolve_wall_data_dir(args.data_root, args.split)
     stats = compute_wall_stats(data_dir)
     episode = load_wall_oracle_episode(data_dir, episode_idx, stats=stats)
-    episode = slice_wall_oracle_episode(episode, horizon=horizon, frame_skip=args.frame_skip)
+    episode = slice_wall_oracle_episode(
+        episode,
+        horizon=horizon,
+        frame_skip=args.frame_skip,
+        start_offset=start_offset,
+    )
 
     env = gym.make(model_cfg.env.name, *model_cfg.env.args, **model_cfg.env.kwargs)
     _prepare_wall_env(env, episode, episode_idx)
@@ -106,7 +138,7 @@ def evaluate_wall(args: argparse.Namespace, episode_idx: int, model, model_cfg, 
         disable_refinement=args.disable_refinement,
     )
 
-    video_path = _wall_episode_video_path(Path(args.video_root), episode_idx)
+    video_path = _wall_episode_video_path(Path(args.video_root), episode_idx, start_offset)
     video_plan = load_wan_video_plan(video_path, task="wall", image_size=args.image_size)
     print(f"[wan0s wall ep {episode_idx}] using video={video_path} frames={len(video_plan)}")
 
@@ -132,6 +164,7 @@ def evaluate_wall(args: argparse.Namespace, episode_idx: int, model, model_cfg, 
     return {
         "task": "wall",
         "episode_idx": episode_idx,
+        "start_offset": int(start_offset),
         "success": bool(metrics["success"]),
         "state_dist": float(metrics["state_dist"]),
         "raw_horizon": args.raw_horizon,
@@ -143,13 +176,25 @@ def evaluate_wall(args: argparse.Namespace, episode_idx: int, model, model_cfg, 
     }
 
 
-def evaluate_pusht(args: argparse.Namespace, episode_idx: int, model, model_cfg, device: torch.device) -> dict:
+def evaluate_pusht(
+    args: argparse.Namespace,
+    episode_idx: int,
+    start_offset: int,
+    model,
+    model_cfg,
+    device: torch.device,
+) -> dict:
     from datasets.pusht_dset import ACTION_MEAN, ACTION_STD
 
     horizon = _macro_horizon(args.raw_horizon, args.frame_skip)
     split_dir = Path(args.data_root) / args.split
     episode = load_oracle_episode(split_dir, episode_idx)
-    episode = slice_oracle_episode(episode, horizon=horizon, frame_skip=args.frame_skip)
+    episode = slice_oracle_episode(
+        episode,
+        horizon=horizon,
+        frame_skip=args.frame_skip,
+        start_offset=start_offset,
+    )
 
     env = gym.make(model_cfg.env.name, *model_cfg.env.args, **model_cfg.env.kwargs)
     reset_out = env.reset()
@@ -194,7 +239,7 @@ def evaluate_pusht(args: argparse.Namespace, episode_idx: int, model, model_cfg,
         disable_refinement=args.disable_refinement,
     )
 
-    video_path = _pusht_episode_video_path(Path(args.video_root), episode_idx)
+    video_path = _pusht_episode_video_path(Path(args.video_root), episode_idx, start_offset)
     video_plan = load_wan_video_plan(video_path, task="pusht", image_size=args.image_size)
     print(f"[wan0s pusht ep {episode_idx}] using video={video_path} frames={len(video_plan)}")
 
@@ -236,6 +281,7 @@ def evaluate_pusht(args: argparse.Namespace, episode_idx: int, model, model_cfg,
     return {
         "task": "pusht",
         "episode_idx": episode_idx,
+        "start_offset": int(start_offset),
         "success": bool(success),
         "block_diff": float(block_diff),
         "angle_diff": float(angle_diff),
@@ -252,6 +298,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate GVP-WM with WAN-0S generated video plans.")
     parser.add_argument("--task", choices=("wall", "pusht"), required=True)
     parser.add_argument("--episode-ids", required=True)
+    parser.add_argument(
+        "--episode-specs",
+        default=None,
+        help="Comma-separated episode[:offset] specs. Overrides --episode-ids.",
+    )
     parser.add_argument("--split", default="all")
     parser.add_argument("--raw-horizon", type=int, default=25)
     parser.add_argument("--frame-skip", type=int, default=5)
@@ -269,7 +320,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--wall-env-action-scale",
         type=float,
-        default=1.0,
+        default=0.5,
         help="Multiplier applied to denormalized Wall actions before env.step.",
     )
     parser.add_argument("--refinement-samples", type=int, default=500)
@@ -298,17 +349,36 @@ def main() -> None:
         evaluator = evaluate_pusht
 
     results = []
-    for episode_idx in _parse_episode_ids(args.episode_ids):
+    eval_specs = (
+        _parse_episode_specs(args.episode_specs)
+        if args.episode_specs
+        else [(episode_idx, 0) for episode_idx in _parse_episode_ids(args.episode_ids)]
+    )
+    for episode_idx, start_offset in eval_specs:
         try:
-            result = evaluator(args, episode_idx, model=model, model_cfg=model_cfg, device=device)
+            result = evaluator(
+                args,
+                episode_idx,
+                start_offset,
+                model=model,
+                model_cfg=model_cfg,
+                device=device,
+            )
             print(f"[wan0s result] {result}")
             results.append(result)
         except Exception as exc:
             import traceback
 
-            print(f"[wan0s {args.task} ep {episode_idx}] ERROR: {exc}")
+            print(f"[wan0s {args.task} ep {episode_idx} offset {start_offset}] ERROR: {exc}")
             traceback.print_exc()
-            results.append({"task": args.task, "episode_idx": episode_idx, "error": str(exc)})
+            results.append(
+                {
+                    "task": args.task,
+                    "episode_idx": episode_idx,
+                    "start_offset": int(start_offset),
+                    "error": str(exc),
+                }
+            )
 
     successes = [item["success"] for item in results if "success" in item]
     summary = {

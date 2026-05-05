@@ -18,6 +18,26 @@ def _parse_episode_ids(value: str) -> list[int]:
     return [int(item) for item in value.split(",") if item.strip()]
 
 
+def _parse_episode_specs(value: str) -> list[tuple[int, int]]:
+    specs = []
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if ":" in item:
+            episode_text, offset_text = item.split(":", 1)
+            specs.append((int(episode_text), int(offset_text)))
+        else:
+            specs.append((int(item), 0))
+    return specs
+
+
+def _case_dir_name(episode_idx: int, start_offset: int) -> str:
+    if start_offset == 0:
+        return f"episode_{episode_idx:03d}"
+    return f"episode_{episode_idx:03d}_offset_{start_offset:03d}"
+
+
 def _macro_horizon(raw_horizon: int, frame_skip: int) -> int:
     if raw_horizon % frame_skip != 0:
         raise ValueError(f"raw_horizon={raw_horizon} must be divisible by frame_skip={frame_skip}")
@@ -29,15 +49,21 @@ def prepare_wall(args: argparse.Namespace) -> list[dict]:
     stats = compute_wall_stats(data_dir)
     horizon = _macro_horizon(args.raw_horizon, args.frame_skip)
     records = []
-    for episode_idx in _parse_episode_ids(args.episode_ids):
+    for episode_idx, start_offset in _parse_episode_specs(args.episode_specs):
         episode = load_wall_oracle_episode(data_dir, episode_idx, stats=stats)
-        episode = slice_wall_oracle_episode(episode, horizon=horizon, frame_skip=args.frame_skip)
-        out_dir = Path(args.output_root) / "wall" / f"episode_{episode_idx:03d}"
+        episode = slice_wall_oracle_episode(
+            episode,
+            horizon=horizon,
+            frame_skip=args.frame_skip,
+            start_offset=start_offset,
+        )
+        out_dir = Path(args.output_root) / "wall" / _case_dir_name(episode_idx, start_offset)
         records.append(
             write_wan0s_case(
                 output_dir=out_dir,
                 task="wall",
                 episode_idx=episode_idx,
+                start_offset=start_offset,
                 start_visual=episode["start_obs"]["visual"],
                 goal_visual=episode["goal_obs"]["visual"],
                 raw_horizon=args.raw_horizon,
@@ -52,15 +78,21 @@ def prepare_pusht(args: argparse.Namespace) -> list[dict]:
     data_dir = Path(args.data_root) / args.split
     horizon = _macro_horizon(args.raw_horizon, args.frame_skip)
     records = []
-    for episode_idx in _parse_episode_ids(args.episode_ids):
+    for episode_idx, start_offset in _parse_episode_specs(args.episode_specs):
         episode = load_oracle_episode(data_dir, episode_idx)
-        episode = slice_oracle_episode(episode, horizon=horizon, frame_skip=args.frame_skip)
-        out_dir = Path(args.output_root) / "pusht" / f"episode_{episode_idx:03d}"
+        episode = slice_oracle_episode(
+            episode,
+            horizon=horizon,
+            frame_skip=args.frame_skip,
+            start_offset=start_offset,
+        )
+        out_dir = Path(args.output_root) / "pusht" / _case_dir_name(episode_idx, start_offset)
         records.append(
             write_wan0s_case(
                 output_dir=out_dir,
                 task="pusht",
                 episode_idx=episode_idx,
+                start_offset=start_offset,
                 start_visual=episode["start_obs"]["visual"],
                 goal_visual=episode["goal_obs"]["visual"],
                 raw_horizon=args.raw_horizon,
@@ -74,7 +106,12 @@ def prepare_pusht(args: argparse.Namespace) -> list[dict]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prepare start/goal frames for WAN-0S FLF2V generation.")
     parser.add_argument("--task", choices=("wall", "pusht"), required=True)
-    parser.add_argument("--episode-ids", required=True, help="Comma-separated episode ids")
+    parser.add_argument("--episode-ids", default="", help="Comma-separated episode ids")
+    parser.add_argument(
+        "--episode-specs",
+        default=None,
+        help="Comma-separated episode[:offset] specs. Overrides --episode-ids.",
+    )
     parser.add_argument("--split", default="all", help="Wall uses all by default; PushT usually uses val")
     parser.add_argument("--raw-horizon", type=int, default=25)
     parser.add_argument("--frame-skip", type=int, default=5)
@@ -86,6 +123,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.episode_specs is None:
+        if not args.episode_ids:
+            raise SystemExit("Either --episode-ids or --episode-specs is required.")
+        args.episode_specs = ",".join(f"{episode_idx}:0" for episode_idx in _parse_episode_ids(args.episode_ids))
     if args.data_root is None:
         dino_root = Path(os.environ.get("DINO_WM_ROOT", Path.home() / "DL2---Grounding-Generated-Videos-" / "dino_wm"))
         if args.task == "wall":
@@ -97,7 +138,13 @@ def main() -> None:
 
     records = prepare_wall(args) if args.task == "wall" else prepare_pusht(args)
     for record in records:
-        print(record["episode_idx"], record["first_frame"], record["last_frame"], record["expected_video"])
+        print(
+            record["episode_idx"],
+            record["start_offset"],
+            record["first_frame"],
+            record["last_frame"],
+            record["expected_video"],
+        )
 
 
 if __name__ == "__main__":

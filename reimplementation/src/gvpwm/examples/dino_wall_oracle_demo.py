@@ -100,7 +100,7 @@ def step_env(
     action_std: torch.Tensor,
     proprio_mean: torch.Tensor,
     proprio_std: torch.Tensor,
-    env_action_scale: float = 1.0,
+    env_action_scale: float = 0.5,
 ) -> dict[str, torch.Tensor]:
     actions = action.detach().reshape(action_repeat, primitive_action_dim)
     primitive_actions = actions * action_std.to(actions.device) + action_mean.to(actions.device)
@@ -108,9 +108,9 @@ def step_env(
     obs = None
     env_device = torch.device(getattr(env.unwrapped, "device", "cpu"))
     for primitive_action in primitive_actions:
-        # Match the native DINO-WM evaluator by sending denormalized planner
-        # actions directly to the environment. Use --wall-env-action-scale only
-        # for action-scale diagnostics against dataset replay.
+        # Wall demonstrations store per-step displacement actions, while
+        # DotWall.step applies location += 2 * action. Scale by 0.5 so dataset
+        # targets and executed environment dynamics live in the same units.
         primitive_action = (
             primitive_action.to(device=env_device, dtype=torch.float32) * env_action_scale
         )
@@ -252,11 +252,11 @@ def evaluate_episode(
     refinement_samples: int = 500,
     refinement_variance: float = 0.3,
     disable_refinement: bool = False,
-    visual_only_guidance: bool = False,
+    visual_only_guidance: bool = True,
     diagnostic_inner_interval: int | None = None,
     diagnostic_outer: bool = False,
     allow_scale_mismatch: bool = False,
-    wall_env_action_scale: float = 1.0,
+    wall_env_action_scale: float = 0.5,
     model=None,
     model_cfg=None,
     device=None,
@@ -316,6 +316,8 @@ def evaluate_episode(
     action_high = episode["action_high"].to(device=device, dtype=torch.float32).repeat(action_repeat)
 
     if not visual_only_guidance:
+        # Diagnostic upper bound only: this injects oracle proprio latents from
+        # the demonstration. Paper-faithful evaluation keeps guidance visual-only.
         DinoWorldModelAdapter.initialize_latents_from_video = _oracle_initialize_latents_from_video
         DinoWorldModelAdapter.video_alignment_loss = _oracle_video_alignment_loss
         DinoWorldModelAdapter.goal_loss = _oracle_goal_loss
@@ -591,15 +593,20 @@ def parse_args():
     parser.add_argument(
         "--visual-only-guidance",
         action="store_true",
-        help="Use visual-only video/goal losses and keep nonvisual latents at the current-state prior.",
+        help="Deprecated compatibility flag; visual-only guidance is now the default.",
+    )
+    parser.add_argument(
+        "--oracle-proprio-guidance",
+        action="store_true",
+        help="Diagnostic only: include oracle proprio latents in video/goal losses.",
     )
     parser.add_argument("--quick", action="store_true", help="Use small ALM/refinement settings for smoke tests")
     parser.add_argument("--allow-scale-mismatch", action="store_true", help="Allow action_repeat != frame_skip for diagnostics only")
     parser.add_argument(
         "--wall-env-action-scale",
         type=float,
-        default=1.0,
-        help="Multiplier applied to denormalized Wall actions before env.step; DINO-WM native evaluator uses 1.0.",
+        default=0.5,
+        help="Multiplier applied to denormalized Wall displacement actions before env.step.",
     )
     parser.add_argument("--debug-inner-every", type=int, default=None, help="Print ALM diagnostics every N inner iterations")
     parser.add_argument("--debug-outer", action="store_true", help="Print diagnostics after every ALM outer iteration")
@@ -687,7 +694,7 @@ def main():
                     refinement_samples=refinement_samples,
                     refinement_variance=args.refinement_variance,
                     disable_refinement=disable_refinement,
-                    visual_only_guidance=args.visual_only_guidance,
+                    visual_only_guidance=args.visual_only_guidance or not args.oracle_proprio_guidance,
                     diagnostic_inner_interval=args.debug_inner_every,
                     diagnostic_outer=args.debug_outer,
                     allow_scale_mismatch=args.allow_scale_mismatch,

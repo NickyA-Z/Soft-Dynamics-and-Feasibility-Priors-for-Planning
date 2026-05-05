@@ -15,6 +15,7 @@ source "${RUNTIME_DIR}/env.sh"
 
 TASK="${WAN0S_TASK:-wall}"
 EPISODE_IDS="${WAN0S_EPISODE_IDS:-0}"
+EPISODE_SPECS="${WAN0S_EPISODE_SPECS:-}"
 RAW_HORIZON="${RAW_HORIZON:-25}"
 FRAME_SKIP="${FRAME_SKIP:-5}"
 WAN_FRAME_NUM="${WAN_FRAME_NUM:-81}"
@@ -48,6 +49,11 @@ prepare_args=()
 if [ -n "${WAN0S_PROMPT:-}" ]; then
   prepare_args+=(--prompt "${WAN0S_PROMPT}")
 fi
+if [ -n "${EPISODE_SPECS}" ]; then
+  prepare_args+=(--episode-specs "${EPISODE_SPECS}")
+else
+  EPISODE_SPECS="${EPISODE_IDS}"
+fi
 "${DINO_WM_PYTHON}" "${REIMPLEMENTATION_ROOT}/scripts/prepare_wan0s_inputs.py" \
   --task "${TASK}" \
   --episode-ids "${EPISODE_IDS}" \
@@ -80,10 +86,21 @@ export HF_HOME HUGGINGFACE_HUB_CACHE TRANSFORMERS_CACHE PIP_CACHE_DIR
 export TMPDIR="${DL2RUNTIME_ROOT}/cache/tmp"
 mkdir -p "${TMPDIR}"
 
-IFS=',' read -r -a episode_array <<< "${EPISODE_IDS}"
-for raw_episode in "${episode_array[@]}"; do
+IFS=',' read -r -a episode_array <<< "${EPISODE_SPECS}"
+for raw_spec in "${episode_array[@]}"; do
+  raw_episode="${raw_spec%%:*}"
+  if [[ "${raw_spec}" == *":"* ]]; then
+    raw_offset="${raw_spec#*:}"
+  else
+    raw_offset="0"
+  fi
   episode="$(printf "%03d" "${raw_episode}")"
-  case_dir="${WAN0S_VIDEO_ROOT}/${TASK}/episode_${episode}"
+  offset="$(printf "%03d" "${raw_offset}")"
+  if [ "${raw_offset}" = "0" ]; then
+    case_dir="${WAN0S_VIDEO_ROOT}/${TASK}/episode_${episode}"
+  else
+    case_dir="${WAN0S_VIDEO_ROOT}/${TASK}/episode_${episode}_offset_${offset}"
+  fi
   prompt_file="${case_dir}/prompt.txt"
   output_video="${case_dir}/wan0s.mp4"
   if [ "${WAN_FORCE}" != "1" ] && [ -s "${output_video}" ]; then
@@ -119,6 +136,7 @@ echo "[wan0s] evaluating generated videos -> ${result_json}"
 "${DINO_WM_PYTHON}" -u -m gvpwm.examples.wan0s_eval \
   --task "${TASK}" \
   --episode-ids "${EPISODE_IDS}" \
+  --episode-specs "${EPISODE_SPECS}" \
   --split "${SPLIT}" \
   --raw-horizon "${RAW_HORIZON}" \
   --frame-skip "${FRAME_SKIP}" \
