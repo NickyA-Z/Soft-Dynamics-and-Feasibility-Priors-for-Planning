@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import pickle
 import sys
 from pathlib import Path
@@ -17,7 +18,9 @@ from ..video import PrecomputedVideoPlanSource
 from .dino_oracle_utils import load_oracle_episode, slice_oracle_episode
 
 
-DINO_WM_ROOT = Path("/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm")
+DINO_WM_ROOT = Path(
+    os.environ.get("DINO_WM_ROOT", "/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm")
+)
 if str(DINO_WM_ROOT) not in sys.path:
     sys.path.append(str(DINO_WM_ROOT))
 
@@ -77,30 +80,47 @@ def load_model_once(device):
 def build_planner(
     world_model: DinoWorldModelAdapter,
     horizon: int,
+    paper_horizon: int | None = None,
+    inner_steps: int = 25,
+    outer_steps: int = 25,
+    lambda_action_override: float | None = None,
+    lambda_action_prior: float = 0.0,
+    lambda_goal: float = 10.0,
+    lambda_video: float = 1.0,
+    residual_reduction: str = "mean",
+    fix_states_to_video: bool = False,
+    use_action_reparameterization: bool = True,
+    refinement_samples: int = 500,
+    refinement_variance: float = 0.3,
+    disable_refinement: bool = False,
     diagnostic_inner_interval: int | None = None,
     diagnostic_outer: bool = False,
 ) -> GVPWMPlanner:
-    lambda_action = 0.05 if horizon == 25 else 0.1
+    hyperparam_horizon = paper_horizon if paper_horizon is not None else horizon
+    lambda_action = 0.05 if hyperparam_horizon == 25 else 0.1
+    if lambda_action_override is not None:
+        lambda_action = lambda_action_override
     return GVPWMPlanner(
         world_model=world_model,
         config=PlannerConfig(
             alm=ALMConfig(
-                inner_steps=25,
-                outer_steps=25,
+                inner_steps=inner_steps,
+                outer_steps=outer_steps,
                 learning_rate=0.05,
                 rho_init=1.0,
                 rho_growth=1.9,
                 rho_max=1_000.0,
-                lambda_video=1.0,
-                lambda_goal=10.0,
+                lambda_video=lambda_video,
+                lambda_goal=lambda_goal,
                 lambda_action=lambda_action,
+                lambda_action_prior=lambda_action_prior,
                 use_video_init=True,
                 use_video_loss=True,
-                fix_states_to_video=False,
-                use_action_reparameterization=True,
+                fix_states_to_video=fix_states_to_video,
+                use_action_reparameterization=use_action_reparameterization,
                 diagnostic_inner_interval=diagnostic_inner_interval,
                 diagnostic_outer=diagnostic_outer,
-                residual_reduction="mean",
+                residual_reduction=residual_reduction,
             ),
             mpc=MPCConfig(
                 horizon=horizon,
@@ -108,9 +128,9 @@ def build_planner(
                 warm_start=True,
             ),
             refinement=RefinementConfig(
-                enabled=True,
-                num_samples=500,
-                noise_variance=0.3,
+                enabled=not disable_refinement,
+                num_samples=refinement_samples,
+                noise_variance=refinement_variance,
             ),
         ),
     )
@@ -143,12 +163,29 @@ def evaluate_episode(
     episode_idx: int,
     split: str,
     horizon: int,
+    frame_skip: int,
+    paper_horizon: int | None = None,
+    inner_steps: int = 25,
+    outer_steps: int = 25,
+    lambda_action_override: float | None = None,
+    lambda_action_prior: float = 0.0,
+    lambda_goal: float = 10.0,
+    lambda_video: float = 1.0,
+    residual_reduction: str = "mean",
+    fix_states_to_video: bool = False,
+    use_action_reparameterization: bool = True,
+    refinement_samples: int = 500,
+    refinement_variance: float = 0.3,
+    disable_refinement: bool = False,
+    expert_action_warmstart: bool = False,
     diagnostic_inner_interval: int | None = None,
     diagnostic_outer: bool = False,
     model=None,
     model_cfg=None,
     device=None,
 ) -> dict:
+    if paper_horizon is None:
+        paper_horizon = horizon * frame_skip
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if model is None or model_cfg is None:
@@ -158,7 +195,7 @@ def evaluate_episode(
 
     split_dir = DATA_ROOT / split
     episode = load_oracle_episode(split_dir, episode_idx)
-    episode = slice_oracle_episode(episode, horizon=horizon, frame_skip=FRAME_SKIP)
+    episode = slice_oracle_episode(episode, horizon=horizon, frame_skip=frame_skip)
 
     env = gym.make(model_cfg.env.name, *model_cfg.env.args, **model_cfg.env.kwargs)
     reset_out = env.reset()
@@ -173,6 +210,16 @@ def evaluate_episode(
     primitive_action_dim = int(env.action_space.shape[0])
     wm_action_dim = int(model.action_encoder.patch_embed.in_channels)
     action_repeat = wm_action_dim // primitive_action_dim
+    if wm_action_dim % primitive_action_dim != 0:
+        raise ValueError(
+            f"World-model action dim {wm_action_dim} is not divisible by "
+            f"PushT primitive action dim {primitive_action_dim}."
+        )
+    if action_repeat != frame_skip:
+        raise ValueError(
+            f"Invalid PushT time scale: action_repeat={action_repeat}, frame_skip={frame_skip}. "
+            "Use --frame-skip matching the checkpoint action concatenation."
+        )
 
     action_mean = ACTION_MEAN.to(device=device, dtype=torch.float32)
     action_std = ACTION_STD.to(device=device, dtype=torch.float32)
@@ -197,14 +244,43 @@ def evaluate_episode(
     planner = build_planner(
         world_model=world_model,
         horizon=horizon,
+        paper_horizon=paper_horizon,
+        inner_steps=inner_steps,
+        outer_steps=outer_steps,
+        lambda_action_override=lambda_action_override,
+        lambda_action_prior=lambda_action_prior,
+        lambda_goal=lambda_goal,
+        lambda_video=lambda_video,
+        residual_reduction=residual_reduction,
+        fix_states_to_video=fix_states_to_video,
+        use_action_reparameterization=use_action_reparameterization,
+        refinement_samples=refinement_samples,
+        refinement_variance=refinement_variance,
+        disable_refinement=disable_refinement,
         diagnostic_inner_interval=diagnostic_inner_interval,
         diagnostic_outer=diagnostic_outer,
     )
 
     print(
         f"starting ALM planner "
-        f"(split={split}, horizon={horizon}, I=25, O=25, gamma=1.9, refinement=500x0.3)"
+        f"(split={split}, macro_horizon={horizon}, raw_horizon={paper_horizon}, "
+        f"frame_skip={frame_skip}, I={inner_steps}, O={outer_steps}, gamma=1.9, "
+        f"lambda_action={planner.config.alm.lambda_action}, "
+        f"lambda_action_prior={planner.config.alm.lambda_action_prior}, "
+        f"lambda_goal={planner.config.alm.lambda_goal}, "
+        f"lambda_video={planner.config.alm.lambda_video}, "
+        f"residual_reduction={planner.config.alm.residual_reduction}, "
+        f"fix_states_to_video={planner.config.alm.fix_states_to_video}, "
+        f"action_reparam={planner.config.alm.use_action_reparameterization}, "
+        f"expert_action_warmstart={expert_action_warmstart}, "
+        f"refinement={'off' if disable_refinement else f'{refinement_samples}x{refinement_variance}'})"
     )
+    initial_warm_start_actions = None
+    if expert_action_warmstart:
+        expert_actions = episode["rel_actions"][: horizon * frame_skip].float().to(device) / 100.0
+        expert_actions = (expert_actions - action_mean) / action_std
+        initial_warm_start_actions = expert_actions.reshape(horizon, action_repeat * primitive_action_dim)
+
     result = planner.run_mpc(
         observation_history=[episode["start_obs"]],
         goal_observation=episode["goal_obs"],
@@ -217,17 +293,20 @@ def evaluate_episode(
             action_std=action_std,
         ),
         video_source=PrecomputedVideoPlanSource(episode["video_plan"], encoded=False),
+        initial_warm_start_actions=initial_warm_start_actions,
     )
     print("ALM planner finished")
 
     first_macro = result.executed_actions[0].detach().cpu().reshape(action_repeat, primitive_action_dim)
     first_macro_raw = ((first_macro * action_std.cpu()) + action_mean.cpu()) * 100.0
-    expert_rel_norm = (episode["rel_actions"][:FRAME_SKIP].float() / 100.0 - action_mean.cpu()) / action_std.cpu()
+    expert_rel_norm = (
+        episode["rel_actions"][:frame_skip].float() / 100.0 - action_mean.cpu()
+    ) / action_std.cpu()
 
     print("first planner macro (normalized):", first_macro)
     print("first planner macro (raw env scale):", first_macro_raw)
-    print("first 5 expert actions:", episode["actions"][:FRAME_SKIP])
-    print("first 5 expert relative actions (normalized):", expert_rel_norm)
+    print(f"first {frame_skip} expert actions:", episode["actions"][:frame_skip])
+    print(f"first {frame_skip} expert relative actions (normalized):", expert_rel_norm)
 
     goal_state = np.concatenate(
         [
@@ -249,49 +328,94 @@ def evaluate_episode(
         dtype=np.float32,
     )
     metrics = env.unwrapped.eval_state(goal_state, cur_state)
+    agent_diff = np.linalg.norm(goal_state[:2] - cur_state[:2])
+    block_diff = np.linalg.norm(goal_state[2:4] - cur_state[2:4])
+    angle_diff = np.abs(goal_state[4] - cur_state[4])
+    angle_diff = np.minimum(angle_diff, 2 * np.pi - angle_diff)
+    vel_diff = np.linalg.norm(goal_state[5:] - cur_state[5:])
+    block_success = block_diff < 20 and angle_diff < np.pi / 9
 
-    print("eval metrics:", metrics)
+    print("eval metrics (env legacy):", metrics)
+    print("block-pose success:", block_success)
     print("agent position:", env.unwrapped.agent.position)
     print("agent velocity:", env.unwrapped.agent.velocity)
     print("block position:", env.unwrapped.block.position)
     print("block angle:", env.unwrapped.block.angle)
-    
-    agent_diff = np.linalg.norm(goal_state[:2] - cur_state[:2])
-    block_diff = np.linalg.norm(goal_state[2:4] - cur_state[2:4])
-    pos_diff = np.linalg.norm(goal_state[:4] - cur_state[:4])
-    angle_diff = np.abs(goal_state[4] - cur_state[4])
-    angle_diff = np.minimum(angle_diff, 2 * np.pi - angle_diff)
-    vel_diff = np.linalg.norm(goal_state[5:] - cur_state[5:])
     print("agent_diff:", agent_diff)
     print("block_diff:", block_diff)
-    print("pos_diff:", pos_diff)
     print("angle_diff:", angle_diff)
     print("vel_diff:", vel_diff)
-    print("success thresholds: pos_diff < 20, angle_diff < pi/9 =", np.pi / 9)
+    print("success thresholds: block_diff < 20, angle_diff < pi/9 =", np.pi / 9)
     
     print(
         f"[ep {episode_idx}] split={split} horizon={horizon} "
-        f"success={metrics['success']} state_dist={metrics['state_dist']:.2f} "
+        f"raw_horizon={paper_horizon} frame_skip={frame_skip} "
+        f"success={block_success} block_diff={block_diff:.2f} "
+        f"angle_diff={angle_diff:.3f} "
         f"dyn_residual={result.steps[-1].dynamics_residual_norm:.4f}"
     )
 
     return {
         "episode_idx": episode_idx,
         "split": split,
-        "success": bool(metrics["success"]),
-        "state_dist": float(metrics["state_dist"]),
+        "success": bool(block_success),
+        "state_dist": float(block_diff),
+        "legacy_env_success": bool(metrics["success"]),
+        "legacy_env_state_dist": float(metrics["state_dist"]),
+        "angle_diff": float(angle_diff),
         "dynamics_residual": float(result.steps[-1].dynamics_residual_norm),
         "executed_actions": int(result.executed_actions.shape[0]),
         "planning_horizon": int(horizon),
+        "raw_horizon": int(paper_horizon if paper_horizon is not None else horizon * frame_skip),
+        "frame_skip": int(frame_skip),
     }
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="GVP-WM Oracle evaluation with ALM latent collocation")
     parser.add_argument("--split", choices=("train", "val"), default=DEFAULT_SPLIT, help="Dataset split")
-    parser.add_argument("--horizon", type=int, choices=(25, 50, 80), default=DEFAULT_HORIZON, help="Planning horizon")
+    parser.add_argument("--horizon", type=int, default=DEFAULT_HORIZON, help="World-model macro planning horizon")
+    parser.add_argument("--raw-horizon", type=int, default=None, help="Paper/environment horizon T; overrides --horizon via T / frame_skip")
+    parser.add_argument("--frame-skip", type=int, default=FRAME_SKIP, help="Raw environment steps per world-model step")
     parser.add_argument("--start-index", type=int, default=0, help="Start offset inside the filtered eligible episode list")
     parser.add_argument("--num-episodes", type=int, default=DEFAULT_NUM_EPISODES, help="Number of filtered episodes to evaluate")
+    parser.add_argument("--episode-ids", default=None, help="Comma-separated explicit episode ids to evaluate")
+    parser.add_argument("--inner-steps", type=int, default=25, help="ALM inner optimizer steps")
+    parser.add_argument("--outer-steps", type=int, default=25, help="ALM outer penalty updates")
+    parser.add_argument("--lambda-action", type=float, default=None, help="Override ALM action regularization weight")
+    parser.add_argument(
+        "--lambda-action-prior",
+        type=float,
+        default=0.0,
+        help="Penalty weight for staying near warm-start actions.",
+    )
+    parser.add_argument("--lambda-goal", type=float, default=10.0, help="ALM goal loss weight")
+    parser.add_argument("--lambda-video", type=float, default=1.0, help="ALM video alignment loss weight")
+    parser.add_argument(
+        "--residual-reduction",
+        choices=("mean", "sum"),
+        default="mean",
+        help="Scale the ALM dynamics penalty by latent dimensionality ('mean') or use paper-style sum.",
+    )
+    parser.add_argument(
+        "--fix-states-to-video",
+        action="store_true",
+        help="Keep collocation latents fixed to oracle video latents while solving actions.",
+    )
+    parser.add_argument(
+        "--disable-action-reparameterization",
+        action="store_true",
+        help="Optimize normalized actions directly with clamp instead of tanh reparameterization.",
+    )
+    parser.add_argument("--refinement-samples", type=int, default=500, help="Number of random refinement samples")
+    parser.add_argument("--refinement-variance", type=float, default=0.3, help="Refinement noise variance")
+    parser.add_argument("--disable-refinement", action="store_true", help="Disable random action refinement")
+    parser.add_argument(
+        "--expert-action-warmstart",
+        action="store_true",
+        help="Diagnostic only: initialize the first MPC solve from dataset expert actions.",
+    )
+    parser.add_argument("--quick", action="store_true", help="Use small ALM/refinement settings for smoke tests")
     parser.add_argument("--debug-inner-every", type=int, default=None, help="Print ALM diagnostics every N inner iterations")
     parser.add_argument("--debug-outer", action="store_true", help="Print diagnostics after every ALM outer iteration")
     return parser.parse_args()
@@ -303,11 +427,34 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model, model_cfg = load_model_once(device)
 
-    split_dir = DATA_ROOT / args.split
-    eligible = candidate_episodes(split_dir, horizon=args.horizon, frame_skip=FRAME_SKIP)
-    eval_episodes = eligible[args.start_index : args.start_index + args.num_episodes]
+    frame_skip = int(args.frame_skip)
+    if args.raw_horizon is not None:
+        if args.raw_horizon % frame_skip != 0:
+            raise ValueError(
+                f"--raw-horizon {args.raw_horizon} must be divisible by --frame-skip {frame_skip}."
+            )
+        macro_horizon = args.raw_horizon // frame_skip
+        paper_horizon = args.raw_horizon
+    else:
+        macro_horizon = args.horizon
+        paper_horizon = macro_horizon * frame_skip
 
-    print(f"Evaluating split={args.split} horizon={args.horizon}")
+    split_dir = DATA_ROOT / args.split
+    eligible = candidate_episodes(split_dir, horizon=macro_horizon, frame_skip=frame_skip)
+    if args.episode_ids:
+        eval_episodes = [int(item) for item in args.episode_ids.split(",") if item.strip()]
+    else:
+        eval_episodes = eligible[args.start_index : args.start_index + args.num_episodes]
+
+    inner_steps = 3 if args.quick else args.inner_steps
+    outer_steps = 2 if args.quick else args.outer_steps
+    refinement_samples = 0 if args.quick else args.refinement_samples
+    disable_refinement = args.disable_refinement or args.quick
+
+    print(
+        f"Evaluating split={args.split} macro_horizon={macro_horizon} "
+        f"raw_horizon={paper_horizon} frame_skip={frame_skip}"
+    )
     print(f"Eligible episodes: {len(eligible)}")
     print(f"Selected episode ids: {eval_episodes}")
 
@@ -319,7 +466,22 @@ def main():
                 evaluate_episode(
                     episode_idx=idx,
                     split=args.split,
-                    horizon=args.horizon,
+                    horizon=macro_horizon,
+                    frame_skip=frame_skip,
+                    paper_horizon=paper_horizon,
+                    inner_steps=inner_steps,
+                    outer_steps=outer_steps,
+                    lambda_action_override=args.lambda_action,
+                    lambda_action_prior=args.lambda_action_prior,
+                    lambda_goal=args.lambda_goal,
+                    lambda_video=args.lambda_video,
+                    residual_reduction=args.residual_reduction,
+                    fix_states_to_video=args.fix_states_to_video,
+                    use_action_reparameterization=not args.disable_action_reparameterization,
+                    refinement_samples=refinement_samples,
+                    refinement_variance=args.refinement_variance,
+                    disable_refinement=disable_refinement,
+                    expert_action_warmstart=args.expert_action_warmstart,
                     diagnostic_inner_interval=args.debug_inner_every,
                     diagnostic_outer=args.debug_outer,
                     model=model,

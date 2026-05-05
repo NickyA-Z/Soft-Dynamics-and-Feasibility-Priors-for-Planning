@@ -13,6 +13,7 @@ class ALMConfig:
     lambda_video: float = 1.0
     lambda_goal: float = 10.0
     lambda_action: float = 0.05
+    lambda_action_prior: float = 0.0
     clip_grad_norm: Optional[float] = None
     use_video_init: bool = True
     use_video_loss: bool = True

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -23,7 +24,9 @@ from .dino_wall_oracle_utils import (
 )
 
 
-DINO_WM_ROOT = Path("/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm")
+DINO_WM_ROOT = Path(
+    os.environ.get("DINO_WM_ROOT", "/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm")
+)
 if str(DINO_WM_ROOT) not in sys.path:
     sys.path.append(str(DINO_WM_ROOT))
 
@@ -101,16 +104,27 @@ def load_model_once(device: torch.device, model_name: str = MODEL_NAME):
 def build_planner(
     world_model: DinoWorldModelAdapter,
     horizon: int,
+    paper_horizon: int | None = None,
     inner_steps: int = 25,
     outer_steps: int = 25,
+    lambda_action_override: float | None = None,
+    lambda_action_prior: float = 0.0,
+    lambda_goal: float = 10.0,
+    lambda_video: float = 1.0,
+    residual_reduction: str = "mean",
+    fix_states_to_video: bool = False,
+    use_action_reparameterization: bool = True,
     refinement_samples: int = 500,
     refinement_variance: float = 0.3,
     disable_refinement: bool = False,
     diagnostic_inner_interval: int | None = None,
     diagnostic_outer: bool = False,
 ) -> GVPWMPlanner:
-    lambda_action = 0.05 if horizon == 25 else 0.1
-    rho_growth = 1.5 if horizon == 25 else 1.9
+    hyperparam_horizon = paper_horizon if paper_horizon is not None else horizon
+    lambda_action = 0.05 if hyperparam_horizon == 25 else 0.1
+    if lambda_action_override is not None:
+        lambda_action = lambda_action_override
+    rho_growth = 1.5 if hyperparam_horizon == 25 else 1.9
     return GVPWMPlanner(
         world_model=world_model,
         config=PlannerConfig(
@@ -121,16 +135,17 @@ def build_planner(
                 rho_init=1.0,
                 rho_growth=rho_growth,
                 rho_max=1_000.0,
-                lambda_video=1.0,
-                lambda_goal=10.0,
+                lambda_video=lambda_video,
+                lambda_goal=lambda_goal,
                 lambda_action=lambda_action,
+                lambda_action_prior=lambda_action_prior,
                 use_video_init=True,
                 use_video_loss=True,
-                fix_states_to_video=False,
-                use_action_reparameterization=True,
+                fix_states_to_video=fix_states_to_video,
+                use_action_reparameterization=use_action_reparameterization,
                 diagnostic_inner_interval=diagnostic_inner_interval,
                 diagnostic_outer=diagnostic_outer,
-                residual_reduction="mean",
+                residual_reduction=residual_reduction,
             ),
             mpc=MPCConfig(
                 horizon=horizon,
@@ -156,6 +171,14 @@ def _oracle_initialize_latents_from_video(
     return latents
 
 
+def _oracle_video_alignment_loss(self, latent, reference):
+    return super(DinoWorldModelAdapter, self).video_alignment_loss(latent, reference)
+
+
+def _oracle_goal_loss(self, latent, goal_latent):
+    return super(DinoWorldModelAdapter, self).goal_loss(latent, goal_latent)
+
+
 def _prepare_wall_env(env: gym.Env, episode: dict, episode_idx: int) -> None:
     env.unwrapped.update_env(episode["env_info"])
     init_state = episode["states"][0].detach().cpu().numpy()
@@ -173,10 +196,18 @@ def evaluate_episode(
     split: str,
     horizon: int,
     frame_skip: int,
+    paper_horizon: int | None,
     data_dir: Path,
     stats: dict[str, torch.Tensor],
     inner_steps: int = 25,
     outer_steps: int = 25,
+    lambda_action_override: float | None = None,
+    lambda_action_prior: float = 0.0,
+    lambda_goal: float = 10.0,
+    lambda_video: float = 1.0,
+    residual_reduction: str = "mean",
+    fix_states_to_video: bool = False,
+    use_action_reparameterization: bool = True,
     refinement_samples: int = 500,
     refinement_variance: float = 0.3,
     disable_refinement: bool = False,
@@ -187,6 +218,8 @@ def evaluate_episode(
     model_cfg=None,
     device=None,
 ) -> dict:
+    if paper_horizon is None:
+        paper_horizon = horizon * frame_skip
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if model is None or model_cfg is None:
@@ -235,6 +268,8 @@ def evaluate_episode(
     action_high = episode["action_high"].to(device=device, dtype=torch.float32).repeat(action_repeat)
 
     DinoWorldModelAdapter.initialize_latents_from_video = _oracle_initialize_latents_from_video
+    DinoWorldModelAdapter.video_alignment_loss = _oracle_video_alignment_loss
+    DinoWorldModelAdapter.goal_loss = _oracle_goal_loss
 
     world_model = DinoWorldModelAdapter(
         world_model=model,
@@ -245,8 +280,16 @@ def evaluate_episode(
     planner = build_planner(
         world_model=world_model,
         horizon=horizon,
+        paper_horizon=paper_horizon,
         inner_steps=inner_steps,
         outer_steps=outer_steps,
+        lambda_action_override=lambda_action_override,
+        lambda_action_prior=lambda_action_prior,
+        lambda_goal=lambda_goal,
+        lambda_video=lambda_video,
+        residual_reduction=residual_reduction,
+        fix_states_to_video=fix_states_to_video,
+        use_action_reparameterization=use_action_reparameterization,
         refinement_samples=refinement_samples,
         refinement_variance=refinement_variance,
         disable_refinement=disable_refinement,
@@ -256,8 +299,16 @@ def evaluate_episode(
 
     print(
         f"starting Wall ALM planner "
-        f"(split={split}, horizon={horizon}, frame_skip={frame_skip}, "
-        f"I={inner_steps}, O={outer_steps}, gamma={'1.5' if horizon == 25 else '1.9'}, "
+        f"(split={split}, macro_horizon={horizon}, raw_horizon={paper_horizon}, "
+        f"frame_skip={frame_skip}, I={inner_steps}, O={outer_steps}, "
+        f"gamma={'1.5' if paper_horizon == 25 else '1.9'}, "
+        f"lambda_action={planner.config.alm.lambda_action}, "
+        f"lambda_action_prior={planner.config.alm.lambda_action_prior}, "
+        f"lambda_goal={planner.config.alm.lambda_goal}, "
+        f"lambda_video={planner.config.alm.lambda_video}, "
+        f"residual_reduction={planner.config.alm.residual_reduction}, "
+        f"fix_states_to_video={planner.config.alm.fix_states_to_video}, "
+        f"action_reparam={planner.config.alm.use_action_reparameterization}, "
         f"refinement={'off' if disable_refinement else f'{refinement_samples}x{refinement_variance}'})"
     )
 
@@ -415,6 +466,7 @@ def evaluate_episode(
     print("success threshold: state_dist < 4.5")
     print(
         f"[wall ep {episode_idx}] split={split} horizon={horizon} "
+        f"raw_horizon={paper_horizon} frame_skip={frame_skip} "
         f"success={metrics['success']} state_dist={metrics['state_dist']:.2f} "
         f"dyn_residual={result.steps[-1].dynamics_residual_norm:.4f}"
     )
@@ -427,20 +479,49 @@ def evaluate_episode(
         "dynamics_residual": float(result.steps[-1].dynamics_residual_norm),
         "executed_actions": int(result.executed_actions.shape[0]),
         "planning_horizon": int(horizon),
+        "raw_horizon": int(paper_horizon),
+        "frame_skip": int(frame_skip),
     }
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="GVP-WM Wall oracle evaluation with ALM latent collocation")
     parser.add_argument("--split", default=DEFAULT_SPLIT, help="Use 'all' for wall_single, or a folder split if present.")
-    parser.add_argument("--horizon", type=int, default=DEFAULT_HORIZON, help="Planning horizon in macro steps")
+    parser.add_argument("--horizon", type=int, default=DEFAULT_HORIZON, help="World-model macro planning horizon")
+    parser.add_argument("--raw-horizon", type=int, default=None, help="Paper/environment horizon T; overrides --horizon via T / frame_skip")
     parser.add_argument("--frame-skip", type=int, default=None, help="Override model/data frame skip")
     parser.add_argument("--start-index", type=int, default=0, help="Start offset inside the eligible episode list")
     parser.add_argument("--num-episodes", type=int, default=DEFAULT_NUM_EPISODES, help="Number of eligible episodes to evaluate")
+    parser.add_argument("--episode-ids", default=None, help="Comma-separated explicit episode ids to evaluate")
     parser.add_argument("--model-name", default=MODEL_NAME, help="Checkpoint folder under dino_wm/checkpoints/outputs")
     parser.add_argument("--data-root", default=str(DATA_ROOT), help="Wall dataset directory")
     parser.add_argument("--inner-steps", type=int, default=25, help="ALM inner optimizer steps")
     parser.add_argument("--outer-steps", type=int, default=25, help="ALM outer penalty updates")
+    parser.add_argument("--lambda-action", type=float, default=None, help="Override ALM action regularization weight")
+    parser.add_argument(
+        "--lambda-action-prior",
+        type=float,
+        default=0.0,
+        help="Penalty weight for staying near warm-start actions.",
+    )
+    parser.add_argument("--lambda-goal", type=float, default=10.0, help="ALM goal loss weight")
+    parser.add_argument("--lambda-video", type=float, default=1.0, help="ALM video alignment loss weight")
+    parser.add_argument(
+        "--residual-reduction",
+        choices=("mean", "sum"),
+        default="mean",
+        help="Scale the ALM dynamics penalty by latent dimensionality ('mean') or use paper-style sum.",
+    )
+    parser.add_argument(
+        "--fix-states-to-video",
+        action="store_true",
+        help="Keep collocation latents fixed to oracle video latents while solving actions.",
+    )
+    parser.add_argument(
+        "--disable-action-reparameterization",
+        action="store_true",
+        help="Optimize normalized actions directly with clamp instead of tanh reparameterization.",
+    )
     parser.add_argument("--refinement-samples", type=int, default=500, help="Number of random refinement samples")
     parser.add_argument("--refinement-variance", type=float, default=0.3, help="Refinement noise variance")
     parser.add_argument("--disable-refinement", action="store_true", help="Disable random action refinement")
@@ -459,18 +540,36 @@ def main():
     frame_skip = args.frame_skip
     if frame_skip is None:
         frame_skip = int(getattr(model_cfg, "frameskip", 1))
+    frame_skip = int(frame_skip)
+
+    if args.raw_horizon is not None:
+        if args.raw_horizon % frame_skip != 0:
+            raise ValueError(
+                f"--raw-horizon {args.raw_horizon} must be divisible by --frame-skip {frame_skip}."
+            )
+        macro_horizon = args.raw_horizon // frame_skip
+        paper_horizon = args.raw_horizon
+    else:
+        macro_horizon = args.horizon
+        paper_horizon = macro_horizon * frame_skip
 
     data_dir = resolve_wall_data_dir(args.data_root, args.split)
     stats = compute_wall_stats(data_dir)
-    eligible = candidate_wall_episodes(data_dir, horizon=args.horizon, frame_skip=frame_skip)
-    eval_episodes = eligible[args.start_index : args.start_index + args.num_episodes]
+    eligible = candidate_wall_episodes(data_dir, horizon=macro_horizon, frame_skip=frame_skip)
+    if args.episode_ids:
+        eval_episodes = [int(item) for item in args.episode_ids.split(",") if item.strip()]
+    else:
+        eval_episodes = eligible[args.start_index : args.start_index + args.num_episodes]
 
     inner_steps = 3 if args.quick else args.inner_steps
     outer_steps = 2 if args.quick else args.outer_steps
     refinement_samples = 0 if args.quick else args.refinement_samples
     disable_refinement = args.disable_refinement or args.quick
 
-    print(f"Evaluating Wall split={args.split} data_dir={data_dir} horizon={args.horizon}")
+    print(
+        f"Evaluating Wall split={args.split} data_dir={data_dir} "
+        f"macro_horizon={macro_horizon} raw_horizon={paper_horizon} frame_skip={frame_skip}"
+    )
     print(f"Eligible episodes: {len(eligible)}")
     print(f"Selected episode ids: {eval_episodes}")
 
@@ -482,12 +581,20 @@ def main():
                 evaluate_episode(
                     episode_idx=idx,
                     split=args.split,
-                    horizon=args.horizon,
+                    horizon=macro_horizon,
                     frame_skip=frame_skip,
+                    paper_horizon=paper_horizon,
                     data_dir=data_dir,
                     stats=stats,
                     inner_steps=inner_steps,
                     outer_steps=outer_steps,
+                    lambda_action_override=args.lambda_action,
+                    lambda_action_prior=args.lambda_action_prior,
+                    lambda_goal=args.lambda_goal,
+                    lambda_video=args.lambda_video,
+                    residual_reduction=args.residual_reduction,
+                    fix_states_to_video=args.fix_states_to_video,
+                    use_action_reparameterization=not args.disable_action_reparameterization,
                     refinement_samples=refinement_samples,
                     refinement_variance=args.refinement_variance,
                     disable_refinement=disable_refinement,

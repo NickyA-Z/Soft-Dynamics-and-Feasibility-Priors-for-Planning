@@ -101,6 +101,8 @@ class GVPWMPlanner:
         video_source: VideoPlanSource | None = None,
         video_plan: VideoPlan | None = None,
         past_action_history: torch.Tensor | None = None,
+        initial_warm_start_latents: torch.Tensor | None = None,
+        initial_warm_start_actions: torch.Tensor | None = None,
     ) -> MPCResult:
         if video_plan is None:
             if video_source is None:
@@ -130,8 +132,16 @@ class GVPWMPlanner:
         else:
             past_action_history = past_action_history.to(self.world_model.device)
 
-        warm_start_latents = None
-        warm_start_actions = None
+        warm_start_latents = (
+            initial_warm_start_latents.to(self.world_model.device)
+            if initial_warm_start_latents is not None
+            else None
+        )
+        warm_start_actions = (
+            initial_warm_start_actions.to(self.world_model.device)
+            if initial_warm_start_actions is not None
+            else None
+        )
         executed_actions = []
         executed_latents = [latent_context[-1]]
         steps: list[MPCStepResult] = []

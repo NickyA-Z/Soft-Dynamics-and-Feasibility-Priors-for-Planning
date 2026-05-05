@@ -119,6 +119,7 @@ class LatentCollocationSolver:
         actions: torch.Tensor,
         goal_latent: torch.Tensor,
         video_latents: torch.Tensor,
+        action_prior: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         video_loss = latents.new_tensor(0.0)
         if self.config.use_video_loss and latents.shape[0] > 2:
@@ -129,16 +130,21 @@ class LatentCollocationSolver:
                 )
         goal_loss = self.world_model.goal_loss(latents[-1], goal_latent)
         action_loss = actions.pow(2).sum()
+        action_prior_loss = latents.new_tensor(0.0)
+        if action_prior is not None and self.config.lambda_action_prior > 0:
+            action_prior_loss = (actions - action_prior).pow(2).sum()
         #action_loss = actions.pow(2).sum(dim=-1).mean()
         objective = (
             self.config.lambda_video * video_loss
             + self.config.lambda_goal * goal_loss
             + self.config.lambda_action * action_loss
+            + self.config.lambda_action_prior * action_prior_loss
         )
         return objective, {
             "video_loss": video_loss,
             "goal_loss": goal_loss,
             "action_loss": action_loss,
+            "action_prior_loss": action_prior_loss,
         }
 
     def solve(
@@ -163,6 +169,9 @@ class LatentCollocationSolver:
             video_latents=video_latents,
             warm_start_latents=warm_start_latents,
         )
+        action_prior = None
+        if warm_start_actions is not None and warm_start_actions.shape[0] == horizon:
+            action_prior = warm_start_actions.to(self.world_model.device)
 
         if self.config.fix_states_to_video:
             latent_parameter = None
@@ -221,6 +230,7 @@ class LatentCollocationSolver:
                     actions=actions,
                     goal_latent=goal_latent,
                     video_latents=video_latents,
+                    action_prior=action_prior,
                 )
                 augmented = objective
                 if self.config.residual_reduction == "mean":
@@ -289,15 +299,20 @@ class LatentCollocationSolver:
                     weighted_video = self.config.lambda_video * pieces["video_loss"]
                     weighted_goal = self.config.lambda_goal * pieces["goal_loss"]
                     weighted_action = self.config.lambda_action * pieces["action_loss"]
+                    weighted_action_prior = (
+                        self.config.lambda_action_prior * pieces["action_prior_loss"]
+                    )
 
                     print(
                         f"[alm outer {outer_index} inner {inner_index}] "
                         f"video={diagnostics['video_loss']:.4f} "
                         f"goal={diagnostics['goal_loss']:.4f} "
                         f"action={diagnostics['action_loss']:.2f} "
+                        f"action_prior={diagnostics['action_prior_loss']:.2f} "
                         f"w_video={float(weighted_video.detach().cpu()):.4f} "
                         f"w_goal={float(weighted_goal.detach().cpu()):.4f} "
                         f"w_action={float(weighted_action.detach().cpu()):.4f} "
+                        f"w_action_prior={float(weighted_action_prior.detach().cpu()):.4f} "
                         f"obj={float(objective.detach().cpu()):.4f} "
                         f"dual={float(dual_term.detach().cpu()):.4f} "
                         f"rho_pen={float(rho_penalty.detach().cpu()):.4f} "
