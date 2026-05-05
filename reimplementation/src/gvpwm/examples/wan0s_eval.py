@@ -218,8 +218,9 @@ def evaluate_pusht(args: argparse.Namespace, episode_idx: int, model, model_cfg,
         dtype=np.float32,
     )
     block_diff = np.linalg.norm(goal_state[2:4] - cur_state[2:4])
-    angle_diff = abs(goal_state[4] - cur_state[4])
-    angle_diff = min(angle_diff, 2 * np.pi - angle_diff)
+    angle_diff = abs(
+        (float(goal_state[4]) - float(cur_state[4]) + np.pi) % (2 * np.pi) - np.pi
+    )
     success = block_diff < 20 and angle_diff < np.pi / 9
     return {
         "task": "pusht",

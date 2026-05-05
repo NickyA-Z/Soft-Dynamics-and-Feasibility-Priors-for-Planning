@@ -330,8 +330,9 @@ def evaluate_episode(
     metrics = env.unwrapped.eval_state(goal_state, cur_state)
     agent_diff = np.linalg.norm(goal_state[:2] - cur_state[:2])
     block_diff = np.linalg.norm(goal_state[2:4] - cur_state[2:4])
-    angle_diff = np.abs(goal_state[4] - cur_state[4])
-    angle_diff = np.minimum(angle_diff, 2 * np.pi - angle_diff)
+    angle_diff = np.abs(
+        (float(goal_state[4]) - float(cur_state[4]) + np.pi) % (2 * np.pi) - np.pi
+    )
     vel_diff = np.linalg.norm(goal_state[5:] - cur_state[5:])
     block_success = block_diff < 20 and angle_diff < np.pi / 9
 

@@ -44,6 +44,10 @@ else
 fi
 
 echo "[wan0s] preparing inputs task=${TASK} episodes=${EPISODE_IDS}"
+prepare_args=()
+if [ -n "${WAN0S_PROMPT:-}" ]; then
+  prepare_args+=(--prompt "${WAN0S_PROMPT}")
+fi
 "${DINO_WM_PYTHON}" "${REIMPLEMENTATION_ROOT}/scripts/prepare_wan0s_inputs.py" \
   --task "${TASK}" \
   --episode-ids "${EPISODE_IDS}" \
@@ -51,7 +55,8 @@ echo "[wan0s] preparing inputs task=${TASK} episodes=${EPISODE_IDS}"
   --raw-horizon "${RAW_HORIZON}" \
   --frame-skip "${FRAME_SKIP}" \
   --data-root "${DATA_ROOT}" \
-  --output-root "${WAN0S_VIDEO_ROOT}"
+  --output-root "${WAN0S_VIDEO_ROOT}" \
+  "${prepare_args[@]}"
 
 module purge
 module load 2023
