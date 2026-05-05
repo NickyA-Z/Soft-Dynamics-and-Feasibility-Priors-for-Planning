@@ -38,6 +38,15 @@ DEFAULT_SPLIT = "val"
 DEFAULT_NUM_EPISODES = 50
 
 
+def seed_episode(episode_idx: int, start_offset: int) -> None:
+    seed = int(episode_idx * 100_000 + start_offset)
+    random.seed(seed)
+    np.random.seed(seed % (2**32 - 1))
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 def to_runtime_observation(obs):
     visual = torch.as_tensor(obs["visual"], dtype=torch.float32).permute(2, 0, 1) / 255.0
     visual = (visual - 0.5) / 0.5
@@ -235,7 +244,7 @@ def evaluate_episode(
     if model is None or model_cfg is None:
         model, model_cfg = load_model_once(device)
 
-    torch.manual_seed(episode_idx * 100_000 + start_offset)
+    seed_episode(episode_idx, start_offset)
 
     split_dir = DATA_ROOT / split
     episode = load_oracle_episode(split_dir, episode_idx)

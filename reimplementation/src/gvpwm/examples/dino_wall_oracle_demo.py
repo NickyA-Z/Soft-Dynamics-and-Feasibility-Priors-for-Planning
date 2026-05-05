@@ -44,6 +44,15 @@ DEFAULT_SPLIT = "all"
 DEFAULT_NUM_EPISODES = 50
 
 
+def seed_episode(episode_idx: int, start_offset: int) -> None:
+    seed = int(episode_idx * 100_000 + start_offset)
+    random.seed(seed)
+    np.random.seed(seed % (2**32 - 1))
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 def parse_episode_specs(value: str) -> list[tuple[int, int]]:
     specs = []
     for item in value.split(","):
@@ -269,7 +278,7 @@ def evaluate_episode(
     if model is None or model_cfg is None:
         model, model_cfg = load_model_once(device)
 
-    torch.manual_seed(episode_idx * 100_000 + start_offset)
+    seed_episode(episode_idx, start_offset)
 
     episode = load_wall_oracle_episode(data_dir, episode_idx, stats=stats)
     if wall_target_source == "env-replay":
