@@ -315,7 +315,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lambda-action", type=float, default=None)
     parser.add_argument("--lambda-goal", type=float, default=10.0)
     parser.add_argument("--lambda-video", type=float, default=1.0)
-    parser.add_argument("--residual-reduction", choices=("mean", "sum"), default="mean")
+    parser.add_argument("--residual-reduction", choices=("mean", "sum"), default="sum")
     parser.add_argument("--disable-action-reparameterization", action="store_true")
     parser.add_argument(
         "--wall-env-action-scale",
