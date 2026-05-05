@@ -100,6 +100,7 @@ def step_env(
     action_std: torch.Tensor,
     proprio_mean: torch.Tensor,
     proprio_std: torch.Tensor,
+    env_action_scale: float = 1.0,
 ) -> dict[str, torch.Tensor]:
     actions = action.detach().reshape(action_repeat, primitive_action_dim)
     primitive_actions = actions * action_std.to(actions.device) + action_mean.to(actions.device)
@@ -107,10 +108,12 @@ def step_env(
     obs = None
     env_device = torch.device(getattr(env.unwrapped, "device", "cpu"))
     for primitive_action in primitive_actions:
-        # WallEnvWrapper applies next_state = state + action * 2 internally, while
-        # wall_single dataset actions already match state deltas. Divide by two so
-        # denormalized dataset-scale actions replay the oracle dynamics.
-        primitive_action = primitive_action.to(device=env_device, dtype=torch.float32) / 2.0
+        # Match the native DINO-WM evaluator by sending denormalized planner
+        # actions directly to the environment. Use --wall-env-action-scale only
+        # for action-scale diagnostics against dataset replay.
+        primitive_action = (
+            primitive_action.to(device=env_device, dtype=torch.float32) * env_action_scale
+        )
         step_out = env.step(primitive_action)
         if len(step_out) == 5:
             obs, _, terminated, truncated, _ = step_out
@@ -253,6 +256,7 @@ def evaluate_episode(
     diagnostic_inner_interval: int | None = None,
     diagnostic_outer: bool = False,
     allow_scale_mismatch: bool = False,
+    wall_env_action_scale: float = 1.0,
     model=None,
     model_cfg=None,
     device=None,
@@ -415,6 +419,7 @@ def evaluate_episode(
             action_std=action_std,
             proprio_mean=episode["proprio_mean"],
             proprio_std=episode["proprio_std"],
+            env_action_scale=wall_env_action_scale,
         )
 
         cur_state = _current_wall_state(env)
@@ -590,6 +595,12 @@ def parse_args():
     )
     parser.add_argument("--quick", action="store_true", help="Use small ALM/refinement settings for smoke tests")
     parser.add_argument("--allow-scale-mismatch", action="store_true", help="Allow action_repeat != frame_skip for diagnostics only")
+    parser.add_argument(
+        "--wall-env-action-scale",
+        type=float,
+        default=1.0,
+        help="Multiplier applied to denormalized Wall actions before env.step; DINO-WM native evaluator uses 1.0.",
+    )
     parser.add_argument("--debug-inner-every", type=int, default=None, help="Print ALM diagnostics every N inner iterations")
     parser.add_argument("--debug-outer", action="store_true", help="Print diagnostics after every ALM outer iteration")
     return parser.parse_args()
@@ -680,6 +691,7 @@ def main():
                     diagnostic_inner_interval=args.debug_inner_every,
                     diagnostic_outer=args.debug_outer,
                     allow_scale_mismatch=args.allow_scale_mismatch,
+                    wall_env_action_scale=args.wall_env_action_scale,
                     model=model,
                     model_cfg=model_cfg,
                     device=device,

@@ -122,6 +122,7 @@ def evaluate_wall(args: argparse.Namespace, episode_idx: int, model, model_cfg, 
             action_std=action_std,
             proprio_mean=episode["proprio_mean"],
             proprio_std=episode["proprio_std"],
+            env_action_scale=args.wall_env_action_scale,
         ),
         video_source=PrecomputedVideoPlanSource(video_plan, encoded=False),
     )
@@ -265,6 +266,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lambda-video", type=float, default=1.0)
     parser.add_argument("--residual-reduction", choices=("mean", "sum"), default="mean")
     parser.add_argument("--disable-action-reparameterization", action="store_true")
+    parser.add_argument(
+        "--wall-env-action-scale",
+        type=float,
+        default=1.0,
+        help="Multiplier applied to denormalized Wall actions before env.step.",
+    )
     parser.add_argument("--refinement-samples", type=int, default=500)
     parser.add_argument("--refinement-variance", type=float, default=0.3)
     parser.add_argument("--disable-refinement", action="store_true")
