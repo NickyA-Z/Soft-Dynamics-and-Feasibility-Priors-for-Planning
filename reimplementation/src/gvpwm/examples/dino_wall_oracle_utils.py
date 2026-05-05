@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 import sys
+import os
 from pathlib import Path
 from typing import Any
 
+import gym
 import torch
 import torch.nn.functional as F
 
 
-DINO_WM_ROOT = Path("/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm")
+DINO_WM_ROOT = Path(
+    os.environ.get(
+        "DINO_WM_ROOT",
+        Path.home() / "DL2---Grounding-Generated-Videos-" / "dino_wm",
+    )
+)
 if str(DINO_WM_ROOT) not in sys.path:
     sys.path.append(str(DINO_WM_ROOT))
+
+import env as _dino_env  # noqa: F401  # registers "wall" with gym
 
 
 def _safe_std(tensor: torch.Tensor) -> torch.Tensor:
@@ -64,6 +73,18 @@ def make_wall_observation(frame: Any, proprio: torch.Tensor) -> dict[str, torch.
         "visual": _to_chw_float(frame),
         "proprio": torch.as_tensor(proprio, dtype=torch.float32),
     }
+
+
+def make_wall_runtime_observation(
+    obs: dict,
+    proprio_mean: torch.Tensor,
+    proprio_std: torch.Tensor,
+) -> dict[str, torch.Tensor]:
+    raw_proprio = torch.as_tensor(obs["proprio"], dtype=torch.float32)
+    mean = proprio_mean.to(device=raw_proprio.device, dtype=raw_proprio.dtype)
+    std = proprio_std.to(device=raw_proprio.device, dtype=raw_proprio.dtype)
+    proprio = (raw_proprio - mean) / std
+    return make_wall_observation(obs["visual"], proprio)
 
 
 def make_visual_only_observation(observation: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -172,6 +193,109 @@ def slice_wall_oracle_episode(
     truncated["planning_horizon"] = horizon
     truncated["frame_skip"] = frame_skip
     truncated["start_offset"] = start
+    return truncated
+
+
+def replay_wall_episode_in_env(
+    episode: dict[str, Any],
+    episode_idx: int,
+    model_cfg: Any,
+    horizon: int,
+    frame_skip: int,
+    start_offset: int = 0,
+    env_action_scale: float = 1.0,
+) -> dict[str, Any]:
+    """Build a DINO-WM-style Wall target by replaying dataset actions in env.
+
+    DINO-WM's planning target path for dataset goals replays demonstration
+    actions through the gym environment and uses the replayed observations and
+    terminal state as the target. This differs from the raw wall_single tensors:
+    those tensors store displacement actions, while DotWall.step applies its
+    native transition. This helper makes the oracle-video protocol match the
+    original evaluator instead of mixing dataset states with env rollouts.
+    """
+
+    required_frames = horizon * frame_skip + 1
+    required_actions = horizon * frame_skip
+    if start_offset < 0:
+        raise ValueError(f"start_offset must be non-negative, got {start_offset}.")
+    if episode["actions"].shape[0] < start_offset + required_actions:
+        raise ValueError(
+            f"Episode has only {episode['actions'].shape[0]} actions, "
+            f"need {start_offset + required_actions}."
+        )
+    if episode["states"].shape[0] <= start_offset:
+        raise ValueError(
+            f"Episode has only {episode['states'].shape[0]} states, "
+            f"cannot start at offset {start_offset}."
+        )
+
+    env = gym.make(model_cfg.env.name, *model_cfg.env.args, **model_cfg.env.kwargs)
+    env.unwrapped.update_env(episode["env_info"])
+    init_state = episode["states"][start_offset].detach().cpu().numpy()
+    env.unwrapped.seed(episode_idx)
+    env.unwrapped.set_init_state(init_state)
+    reset_out = env.reset()
+    obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
+
+    def normalize_env_obs(raw_obs: dict) -> dict[str, torch.Tensor]:
+        if hasattr(env.unwrapped, "transform"):
+            raw_obs = dict(raw_obs)
+            raw_obs["visual"] = env.unwrapped.transform(raw_obs["visual"]).permute(1, 2, 0)
+        return make_wall_runtime_observation(
+            raw_obs,
+            proprio_mean=episode["proprio_mean"],
+            proprio_std=episode["proprio_std"],
+        )
+
+    full_video_plan = [normalize_env_obs(obs)]
+    replay_states = [env.unwrapped.dot_position.detach().cpu().float()]
+    action_slice = episode["actions"][start_offset : start_offset + required_actions].float()
+    env_device = torch.device(getattr(env.unwrapped, "device", "cpu"))
+    for action in action_slice:
+        primitive_action = action.to(device=env_device, dtype=torch.float32) * env_action_scale
+        step_out = env.step(primitive_action)
+        if len(step_out) == 5:
+            obs, _, terminated, truncated, _ = step_out
+            done = terminated or truncated
+        else:
+            obs, _, done, _ = step_out
+        full_video_plan.append(normalize_env_obs(obs))
+        replay_states.append(env.unwrapped.dot_position.detach().cpu().float())
+        if done:
+            break
+
+    if len(full_video_plan) < required_frames:
+        raise RuntimeError(
+            f"Wall env replay ended after {len(full_video_plan)} frames; "
+            f"need {required_frames}."
+        )
+
+    macro_indices = list(range(0, required_frames, frame_skip))
+    replay_states_tensor = torch.stack(replay_states[:required_frames], dim=0)
+    replay_proprio = (replay_states_tensor - episode["proprio_mean"]) / episode["proprio_std"]
+
+    truncated = dict(episode)
+    truncated["video_plan"] = [full_video_plan[i] for i in macro_indices]
+    truncated["start_obs"] = full_video_plan[0]
+    truncated["goal_obs"] = full_video_plan[required_frames - 1]
+    truncated["actions"] = action_slice
+    truncated["actions_normalized"] = (
+        action_slice - episode["action_mean"]
+    ) / episode["action_std"]
+    truncated["states"] = replay_states_tensor
+    truncated["proprio"] = replay_proprio
+    truncated["door_locations"] = episode["door_locations"][
+        start_offset : start_offset + required_frames
+    ]
+    truncated["wall_locations"] = episode["wall_locations"][
+        start_offset : start_offset + required_frames
+    ]
+    truncated["length"] = required_frames
+    truncated["planning_horizon"] = horizon
+    truncated["frame_skip"] = frame_skip
+    truncated["start_offset"] = int(start_offset)
+    truncated["wall_target_source"] = "env-replay"
     return truncated
 
 

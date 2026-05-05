@@ -214,7 +214,7 @@ def evaluate_episode(
     lambda_action_prior: float = 0.0,
     lambda_goal: float = 10.0,
     lambda_video: float = 1.0,
-    residual_reduction: str = "mean",
+    residual_reduction: str = "sum",
     fix_states_to_video: bool = False,
     use_action_reparameterization: bool = True,
     refinement_samples: int = 500,

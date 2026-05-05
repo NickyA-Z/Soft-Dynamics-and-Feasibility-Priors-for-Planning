@@ -25,6 +25,7 @@ WAN_SAMPLE_GUIDE_SCALE="${WAN_SAMPLE_GUIDE_SCALE:-5}"
 WAN_SIZE="${WAN_SIZE:-1280*720}"
 WAN_BASE_SEED="${WAN_BASE_SEED:-42}"
 WAN_FORCE="${WAN_FORCE:-0}"
+WAN0S_WALL_TARGET_SOURCE="${WAN0S_WALL_TARGET_SOURCE:-env-replay}"
 EVAL_INNER_STEPS="${EVAL_INNER_STEPS:-25}"
 EVAL_OUTER_STEPS="${EVAL_OUTER_STEPS:-25}"
 EVAL_REFINEMENT_SAMPLES="${EVAL_REFINEMENT_SAMPLES:-500}"
@@ -62,6 +63,7 @@ fi
   --frame-skip "${FRAME_SKIP}" \
   --data-root "${DATA_ROOT}" \
   --output-root "${WAN0S_VIDEO_ROOT}" \
+  --wall-target-source "${WAN0S_WALL_TARGET_SOURCE}" \
   "${prepare_args[@]}"
 
 module purge
@@ -143,6 +145,7 @@ echo "[wan0s] evaluating generated videos -> ${result_json}"
   --video-root "${WAN0S_VIDEO_ROOT}" \
   --data-root "${DATA_ROOT}" \
   --output-json "${result_json}" \
+  --wall-target-source "${WAN0S_WALL_TARGET_SOURCE}" \
   --inner-steps "${EVAL_INNER_STEPS}" \
   --outer-steps "${EVAL_OUTER_STEPS}" \
   --refinement-samples "${EVAL_REFINEMENT_SAMPLES}"

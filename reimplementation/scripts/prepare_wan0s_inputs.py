@@ -4,10 +4,14 @@ import argparse
 import os
 from pathlib import Path
 
+from omegaconf import OmegaConf
+
 from gvpwm.examples.dino_oracle_utils import load_oracle_episode, slice_oracle_episode
 from gvpwm.examples.dino_wall_oracle_utils import (
+    DINO_WM_ROOT,
     compute_wall_stats,
     load_wall_oracle_episode,
+    replay_wall_episode_in_env,
     resolve_wall_data_dir,
     slice_wall_oracle_episode,
 )
@@ -47,16 +51,29 @@ def _macro_horizon(raw_horizon: int, frame_skip: int) -> int:
 def prepare_wall(args: argparse.Namespace) -> list[dict]:
     data_dir = resolve_wall_data_dir(args.data_root, args.split)
     stats = compute_wall_stats(data_dir)
+    model_cfg = OmegaConf.load(DINO_WM_ROOT / "checkpoints" / "outputs" / "wall_single" / "hydra.yaml")
     horizon = _macro_horizon(args.raw_horizon, args.frame_skip)
     records = []
     for episode_idx, start_offset in _parse_episode_specs(args.episode_specs):
         episode = load_wall_oracle_episode(data_dir, episode_idx, stats=stats)
-        episode = slice_wall_oracle_episode(
-            episode,
-            horizon=horizon,
-            frame_skip=args.frame_skip,
-            start_offset=start_offset,
-        )
+        if args.wall_target_source == "env-replay":
+            env_action_scale = 1.0 if args.wall_env_action_scale is None else args.wall_env_action_scale
+            episode = replay_wall_episode_in_env(
+                episode,
+                episode_idx=episode_idx,
+                model_cfg=model_cfg,
+                horizon=horizon,
+                frame_skip=args.frame_skip,
+                start_offset=start_offset,
+                env_action_scale=env_action_scale,
+            )
+        else:
+            episode = slice_wall_oracle_episode(
+                episode,
+                horizon=horizon,
+                frame_skip=args.frame_skip,
+                start_offset=start_offset,
+            )
         out_dir = Path(args.output_root) / "wall" / _case_dir_name(episode_idx, start_offset)
         records.append(
             write_wan0s_case(
@@ -118,6 +135,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-root", default=None)
     parser.add_argument("--output-root", default=os.environ.get("WAN0S_VIDEO_ROOT", "wan0s_videos"))
     parser.add_argument("--prompt", default=None, help="Override the default Chinese FLF2V prompt")
+    parser.add_argument(
+        "--wall-target-source",
+        choices=("env-replay", "dataset"),
+        default="env-replay",
+        help="For Wall, prepare DINO-WM env-replayed goals or raw dataset goals.",
+    )
+    parser.add_argument(
+        "--wall-env-action-scale",
+        type=float,
+        default=None,
+        help="For Wall env-replay preparation, scale dataset actions before env.step.",
+    )
     return parser.parse_args()
 
 

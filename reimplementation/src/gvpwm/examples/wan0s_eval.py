@@ -27,6 +27,7 @@ from .dino_wall_oracle_demo import (
 from .dino_wall_oracle_utils import (
     compute_wall_stats,
     load_wall_oracle_episode,
+    replay_wall_episode_in_env,
     resolve_wall_data_dir,
     slice_wall_oracle_episode,
 )
@@ -95,12 +96,27 @@ def evaluate_wall(
     data_dir = resolve_wall_data_dir(args.data_root, args.split)
     stats = compute_wall_stats(data_dir)
     episode = load_wall_oracle_episode(data_dir, episode_idx, stats=stats)
-    episode = slice_wall_oracle_episode(
-        episode,
-        horizon=horizon,
-        frame_skip=args.frame_skip,
-        start_offset=start_offset,
-    )
+    if args.wall_target_source == "env-replay":
+        target_env_action_scale = 1.0 if args.wall_env_action_scale is None else args.wall_env_action_scale
+        episode = replay_wall_episode_in_env(
+            episode,
+            episode_idx=episode_idx,
+            model_cfg=model_cfg,
+            horizon=horizon,
+            frame_skip=args.frame_skip,
+            start_offset=start_offset,
+            env_action_scale=target_env_action_scale,
+        )
+    elif args.wall_target_source == "dataset":
+        target_env_action_scale = 0.5 if args.wall_env_action_scale is None else args.wall_env_action_scale
+        episode = slice_wall_oracle_episode(
+            episode,
+            horizon=horizon,
+            frame_skip=args.frame_skip,
+            start_offset=start_offset,
+        )
+    else:
+        raise ValueError(f"Unsupported wall_target_source={args.wall_target_source!r}")
 
     env = gym.make(model_cfg.env.name, *model_cfg.env.args, **model_cfg.env.kwargs)
     _prepare_wall_env(env, episode, episode_idx)
@@ -154,7 +170,7 @@ def evaluate_wall(
             action_std=action_std,
             proprio_mean=episode["proprio_mean"],
             proprio_std=episode["proprio_std"],
-            env_action_scale=args.wall_env_action_scale,
+            env_action_scale=target_env_action_scale,
         ),
         video_source=PrecomputedVideoPlanSource(video_plan, encoded=False),
     )
@@ -171,6 +187,8 @@ def evaluate_wall(
         "frame_skip": args.frame_skip,
         "generated_video": str(video_path),
         "generated_frames": len(video_plan),
+        "wall_target_source": args.wall_target_source,
+        "wall_env_action_scale": float(target_env_action_scale),
         "executed_actions": int(result.executed_actions.shape[0]),
         "dynamics_residual": float(result.steps[-1].dynamics_residual_norm),
     }
@@ -320,8 +338,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--wall-env-action-scale",
         type=float,
-        default=0.5,
+        default=None,
         help="Multiplier applied to denormalized Wall actions before env.step.",
+    )
+    parser.add_argument(
+        "--wall-target-source",
+        choices=("env-replay", "dataset"),
+        default="env-replay",
+        help="Use DINO-WM env-replayed dataset goals or raw dataset tensor goals.",
     )
     parser.add_argument("--refinement-samples", type=int, default=500)
     parser.add_argument("--refinement-variance", type=float, default=0.3)

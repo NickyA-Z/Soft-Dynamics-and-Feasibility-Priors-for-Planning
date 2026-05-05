@@ -19,7 +19,8 @@ from .dino_wall_oracle_utils import (
     candidate_wall_episodes,
     compute_wall_stats,
     load_wall_oracle_episode,
-    make_wall_observation,
+    make_wall_runtime_observation,
+    replay_wall_episode_in_env,
     resolve_wall_data_dir,
     slice_wall_oracle_episode,
 )
@@ -84,11 +85,11 @@ def to_runtime_observation(
     proprio_mean: torch.Tensor,
     proprio_std: torch.Tensor,
 ) -> dict[str, torch.Tensor]:
-    raw_proprio = torch.as_tensor(obs["proprio"], dtype=torch.float32)
-    mean = proprio_mean.to(device=raw_proprio.device, dtype=raw_proprio.dtype)
-    std = proprio_std.to(device=raw_proprio.device, dtype=raw_proprio.dtype)
-    proprio = (raw_proprio - mean) / std
-    return make_wall_observation(obs["visual"], proprio)
+    return make_wall_runtime_observation(
+        obs,
+        proprio_mean=proprio_mean,
+        proprio_std=proprio_std,
+    )
 
 
 def step_env(
@@ -100,7 +101,7 @@ def step_env(
     action_std: torch.Tensor,
     proprio_mean: torch.Tensor,
     proprio_std: torch.Tensor,
-    env_action_scale: float = 0.5,
+    env_action_scale: float = 1.0,
 ) -> dict[str, torch.Tensor]:
     actions = action.detach().reshape(action_repeat, primitive_action_dim)
     primitive_actions = actions * action_std.to(actions.device) + action_mean.to(actions.device)
@@ -108,9 +109,8 @@ def step_env(
     obs = None
     env_device = torch.device(getattr(env.unwrapped, "device", "cpu"))
     for primitive_action in primitive_actions:
-        # Wall demonstrations store per-step displacement actions, while
-        # DotWall.step applies location += 2 * action. Scale by 0.5 so dataset
-        # targets and executed environment dynamics live in the same units.
+        # The caller chooses env-replay (DINO-WM native, scale=1.0) or raw
+        # dataset-state targets (scale=0.5) before executing actions.
         primitive_action = (
             primitive_action.to(device=env_device, dtype=torch.float32) * env_action_scale
         )
@@ -246,7 +246,7 @@ def evaluate_episode(
     lambda_action_prior: float = 0.0,
     lambda_goal: float = 10.0,
     lambda_video: float = 1.0,
-    residual_reduction: str = "mean",
+    residual_reduction: str = "sum",
     fix_states_to_video: bool = False,
     use_action_reparameterization: bool = True,
     refinement_samples: int = 500,
@@ -256,7 +256,8 @@ def evaluate_episode(
     diagnostic_inner_interval: int | None = None,
     diagnostic_outer: bool = False,
     allow_scale_mismatch: bool = False,
-    wall_env_action_scale: float = 0.5,
+    wall_env_action_scale: float | None = None,
+    wall_target_source: str = "env-replay",
     model=None,
     model_cfg=None,
     device=None,
@@ -271,12 +272,27 @@ def evaluate_episode(
     torch.manual_seed(episode_idx * 100_000 + start_offset)
 
     episode = load_wall_oracle_episode(data_dir, episode_idx, stats=stats)
-    episode = slice_wall_oracle_episode(
-        episode,
-        horizon=horizon,
-        frame_skip=frame_skip,
-        start_offset=start_offset,
-    )
+    if wall_target_source == "env-replay":
+        target_env_action_scale = 1.0 if wall_env_action_scale is None else wall_env_action_scale
+        episode = replay_wall_episode_in_env(
+            episode,
+            episode_idx=episode_idx,
+            model_cfg=model_cfg,
+            horizon=horizon,
+            frame_skip=frame_skip,
+            start_offset=start_offset,
+            env_action_scale=target_env_action_scale,
+        )
+    elif wall_target_source == "dataset":
+        target_env_action_scale = 0.5 if wall_env_action_scale is None else wall_env_action_scale
+        episode = slice_wall_oracle_episode(
+            episode,
+            horizon=horizon,
+            frame_skip=frame_skip,
+            start_offset=start_offset,
+        )
+    else:
+        raise ValueError(f"Unsupported wall_target_source={wall_target_source!r}")
 
     env = gym.make(model_cfg.env.name, *model_cfg.env.args, **model_cfg.env.kwargs)
     _prepare_wall_env(env, episode, episode_idx)
@@ -361,6 +377,8 @@ def evaluate_episode(
         f"fix_states_to_video={planner.config.alm.fix_states_to_video}, "
         f"action_reparam={planner.config.alm.use_action_reparameterization}, "
         f"visual_only_guidance={visual_only_guidance}, "
+        f"wall_target_source={wall_target_source}, "
+        f"wall_env_action_scale={target_env_action_scale}, "
         f"refinement={'off' if disable_refinement else f'{refinement_samples}x{refinement_variance}'})"
     )
 
@@ -421,7 +439,7 @@ def evaluate_episode(
             action_std=action_std,
             proprio_mean=episode["proprio_mean"],
             proprio_std=episode["proprio_std"],
-            env_action_scale=wall_env_action_scale,
+            env_action_scale=target_env_action_scale,
         )
 
         cur_state = _current_wall_state(env)
@@ -605,8 +623,14 @@ def parse_args():
     parser.add_argument(
         "--wall-env-action-scale",
         type=float,
-        default=0.5,
-        help="Multiplier applied to denormalized Wall displacement actions before env.step.",
+        default=None,
+        help="Multiplier applied to denormalized Wall actions before env.step. Defaults to 1.0 for env-replay targets and 0.5 for dataset targets.",
+    )
+    parser.add_argument(
+        "--wall-target-source",
+        choices=("env-replay", "dataset"),
+        default="env-replay",
+        help="Use DINO-WM env-replayed dataset goals or raw dataset tensor goals.",
     )
     parser.add_argument("--debug-inner-every", type=int, default=None, help="Print ALM diagnostics every N inner iterations")
     parser.add_argument("--debug-outer", action="store_true", help="Print diagnostics after every ALM outer iteration")
@@ -699,6 +723,7 @@ def main():
                     diagnostic_outer=args.debug_outer,
                     allow_scale_mismatch=args.allow_scale_mismatch,
                     wall_env_action_scale=args.wall_env_action_scale,
+                    wall_target_source=args.wall_target_source,
                     model=model,
                     model_cfg=model_cfg,
                     device=device,
