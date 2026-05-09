@@ -7,7 +7,6 @@ from .interfaces import CollocationResult, WorldModelAdapter
 from .losses import squared_norm
 from .utils import ensure_history_length
 
-
 class LatentCollocationSolver:
     def __init__(self, world_model: WorldModelAdapter, config: ALMConfig) -> None:
         self.world_model = world_model
@@ -42,8 +41,8 @@ class LatentCollocationSolver:
         warm_start_latents: torch.Tensor | None,
     ) -> torch.Tensor:
         horizon = video_latents.shape[0] - 1
-        if warm_start_latents is not None and warm_start_latents.shape[0] == horizon + 1:
-            latents = warm_start_latents.clone()
+        if warm_start_latents is not None and warm_start_latents.shape[0] >= horizon + 1:
+            latents = warm_start_latents[: horizon + 1].clone()
         elif self.config.use_video_init:
             latents = self.world_model.initialize_latents_from_video(
                 current_latent=current_latent,
@@ -70,14 +69,20 @@ class LatentCollocationSolver:
         warm_start_actions: torch.Tensor | None,
         device: torch.device,
     ) -> torch.Tensor:
-        if warm_start_actions is not None and warm_start_actions.shape[0] == horizon:
-            return self._raw_parameter_from_actions(warm_start_actions.to(device))
-        return torch.zeros(
+        if warm_start_actions is not None and warm_start_actions.shape[0] >= horizon:
+            return self._raw_parameter_from_actions(warm_start_actions[:horizon].to(device))
+        initial_actions = torch.zeros(
             horizon,
             self.world_model.action_dim,
             device=device,
             dtype=self.world_model.action_low.dtype,
         )
+        initial_actions = torch.clamp(
+            initial_actions,
+            min=self.world_model.action_low.to(device),
+            max=self.world_model.action_high.to(device),
+        )
+        return self._raw_parameter_from_actions(initial_actions)
 
     def _dynamics_residuals(
         self,
@@ -86,17 +91,32 @@ class LatentCollocationSolver:
         candidate_latents: torch.Tensor,
         candidate_actions: torch.Tensor,
     ) -> torch.Tensor:
-        history = ensure_history_length(
-            latent_context,
-            self.world_model.history_length,
-            pad_mode="repeat_first",
-        )
-        if self.world_model.history_length > 1:
-            action_context = ensure_history_length(
-                past_action_context,
-                self.world_model.history_length - 1,
-                pad_mode="zeros",
+        if self.config.pad_initial_history:
+            history = ensure_history_length(
+                latent_context,
+                self.world_model.history_length,
+                pad_mode="repeat_first",
             )
+        else:
+            history = latent_context[-self.world_model.history_length :]
+        if self.world_model.history_length > 1:
+            action_context_len = self.world_model.history_length - 1
+            action_context = past_action_context[-action_context_len:].clone()
+            missing_actions = action_context_len - action_context.shape[0]
+            if not self.config.pad_initial_history:
+                missing_actions = max(history.shape[0] - 1 - action_context.shape[0], 0)
+            if missing_actions > 0:
+                if self.config.history_action_pad == "zeros":
+                    pad = candidate_actions.new_zeros(missing_actions, self.world_model.action_dim)
+                elif self.config.history_action_pad == "repeat_available":
+                    if action_context.shape[0] > 0:
+                        pad_value = action_context[:1]
+                    else:
+                        pad_value = candidate_actions[:1]
+                    pad = pad_value.expand(missing_actions, -1)
+                else:
+                    raise ValueError(f"Unknown history_action_pad: {self.config.history_action_pad}")
+                action_context = torch.cat([pad, action_context], dim=0)
         else:
             action_context = candidate_actions.new_zeros((0, self.world_model.action_dim))
 
@@ -105,10 +125,22 @@ class LatentCollocationSolver:
             state_window = torch.cat([history, candidate_latents[1 : index + 1]], dim=0)[
                 -self.world_model.history_length :
             ]
-            action_window = torch.cat(
+            action_window_full = torch.cat(
                 [action_context, candidate_actions[: index + 1]],
                 dim=0,
-            )[-self.world_model.history_length :]
+            )
+            action_window_len = (
+                self.world_model.history_length
+                if self.config.pad_initial_history
+                else state_window.shape[0]
+            )
+            action_window = action_window_full[-action_window_len:]
+            if action_window.shape[0] < state_window.shape[0]:
+                pad = candidate_actions.new_zeros(
+                    state_window.shape[0] - action_window.shape[0],
+                    self.world_model.action_dim,
+                )
+                action_window = torch.cat([pad, action_window], dim=0)
             predicted_next = self.world_model.predict_next_latent(state_window, action_window)
             residuals.append(candidate_latents[index + 1] - predicted_next)
         return torch.stack(residuals, dim=0)
@@ -170,8 +202,8 @@ class LatentCollocationSolver:
             warm_start_latents=warm_start_latents,
         )
         action_prior = None
-        if warm_start_actions is not None and warm_start_actions.shape[0] == horizon:
-            action_prior = warm_start_actions.to(self.world_model.device)
+        if warm_start_actions is not None and warm_start_actions.shape[0] >= horizon:
+            action_prior = warm_start_actions[:horizon].to(self.world_model.device)
 
         if self.config.fix_states_to_video:
             latent_parameter = None

@@ -24,6 +24,8 @@ class ALMConfig:
     diagnostic_outer: bool = False
     residual_reduction: str = "sum"  # "sum" (paper) or "mean" (per-element-mean of ||L_dyn||^2)
     diagnostic_grad_norms: bool = False  # if True, print grad norms of latent/action parameters per inner step
+    history_action_pad: str = "zeros"  # "zeros" or "repeat_available" for missing DINO action history
+    pad_initial_history: bool = True  # if False, start from available context and let DINO history grow
 
 
 @dataclass
@@ -31,6 +33,7 @@ class RefinementConfig:
     enabled: bool = True
     num_samples: int = 500
     noise_variance: float = 0.3
+    objective: str = "goal"  # "goal" (paper text) or "planner" (video+goal+action)
 
 
 @dataclass

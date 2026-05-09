@@ -156,15 +156,19 @@ def build_planner(
     paper_horizon: int | None = None,
     inner_steps: int = 25,
     outer_steps: int = 25,
+    learning_rate: float = 0.05,
     lambda_action_override: float | None = None,
     lambda_action_prior: float = 0.0,
     lambda_goal: float = 10.0,
     lambda_video: float = 1.0,
     residual_reduction: str = "sum",
+    history_action_pad: str = "zeros",
+    pad_initial_history: bool = True,
     fix_states_to_video: bool = False,
     use_action_reparameterization: bool = True,
     refinement_samples: int = 500,
     refinement_variance: float = 0.3,
+    refinement_objective: str = "goal",
     disable_refinement: bool = False,
     diagnostic_inner_interval: int | None = None,
     diagnostic_outer: bool = False,
@@ -180,7 +184,7 @@ def build_planner(
             alm=ALMConfig(
                 inner_steps=inner_steps,
                 outer_steps=outer_steps,
-                learning_rate=0.05,
+                learning_rate=learning_rate,
                 rho_init=1.0,
                 rho_growth=rho_growth,
                 rho_max=1_000.0,
@@ -195,6 +199,8 @@ def build_planner(
                 diagnostic_inner_interval=diagnostic_inner_interval,
                 diagnostic_outer=diagnostic_outer,
                 residual_reduction=residual_reduction,
+                history_action_pad=history_action_pad,
+                pad_initial_history=pad_initial_history,
             ),
             mpc=MPCConfig(
                 horizon=horizon,
@@ -205,6 +211,7 @@ def build_planner(
                 enabled=not disable_refinement,
                 num_samples=refinement_samples,
                 noise_variance=refinement_variance,
+                objective=refinement_objective,
             ),
         ),
     )
@@ -251,17 +258,22 @@ def evaluate_episode(
     stats: dict[str, torch.Tensor],
     inner_steps: int = 25,
     outer_steps: int = 25,
+    learning_rate: float = 0.05,
     lambda_action_override: float | None = None,
     lambda_action_prior: float = 0.0,
     lambda_goal: float = 10.0,
     lambda_video: float = 1.0,
     residual_reduction: str = "sum",
+    history_action_pad: str = "zeros",
+    pad_initial_history: bool = True,
     fix_states_to_video: bool = False,
     use_action_reparameterization: bool = True,
     refinement_samples: int = 500,
     refinement_variance: float = 0.3,
+    refinement_objective: str = "goal",
     disable_refinement: bool = False,
     visual_only_guidance: bool = True,
+    wm_history_length: int | None = None,
     diagnostic_inner_interval: int | None = None,
     diagnostic_outer: bool = False,
     allow_scale_mismatch: bool = False,
@@ -352,6 +364,7 @@ def evaluate_episode(
         action_dim=wm_action_dim,
         action_low=action_low,
         action_high=action_high,
+        planning_history_length=wm_history_length,
     )
     planner = build_planner(
         world_model=world_model,
@@ -359,15 +372,19 @@ def evaluate_episode(
         paper_horizon=paper_horizon,
         inner_steps=inner_steps,
         outer_steps=outer_steps,
+        learning_rate=learning_rate,
         lambda_action_override=lambda_action_override,
         lambda_action_prior=lambda_action_prior,
         lambda_goal=lambda_goal,
         lambda_video=lambda_video,
         residual_reduction=residual_reduction,
+        history_action_pad=history_action_pad,
+        pad_initial_history=pad_initial_history,
         fix_states_to_video=fix_states_to_video,
         use_action_reparameterization=use_action_reparameterization,
         refinement_samples=refinement_samples,
         refinement_variance=refinement_variance,
+        refinement_objective=refinement_objective,
         disable_refinement=disable_refinement,
         diagnostic_inner_interval=diagnostic_inner_interval,
         diagnostic_outer=diagnostic_outer,
@@ -376,19 +393,22 @@ def evaluate_episode(
     print(
         f"starting Wall ALM planner "
         f"(split={split}, macro_horizon={horizon}, raw_horizon={paper_horizon}, "
-        f"frame_skip={frame_skip}, I={inner_steps}, O={outer_steps}, "
+        f"frame_skip={frame_skip}, I={inner_steps}, O={outer_steps}, lr={learning_rate}, "
         f"gamma={'1.5' if paper_horizon == 25 else '1.9'}, "
         f"lambda_action={planner.config.alm.lambda_action}, "
         f"lambda_action_prior={planner.config.alm.lambda_action_prior}, "
         f"lambda_goal={planner.config.alm.lambda_goal}, "
         f"lambda_video={planner.config.alm.lambda_video}, "
         f"residual_reduction={planner.config.alm.residual_reduction}, "
+        f"history_action_pad={planner.config.alm.history_action_pad}, "
+        f"pad_initial_history={planner.config.alm.pad_initial_history}, "
         f"fix_states_to_video={planner.config.alm.fix_states_to_video}, "
         f"action_reparam={planner.config.alm.use_action_reparameterization}, "
         f"visual_only_guidance={visual_only_guidance}, "
+        f"wm_history_length={world_model.history_length}/{world_model.model_history_length}, "
         f"wall_target_source={wall_target_source}, "
         f"wall_env_action_scale={target_env_action_scale}, "
-        f"refinement={'off' if disable_refinement else f'{refinement_samples}x{refinement_variance}'})"
+        f"refinement={'off' if disable_refinement else f'{refinement_samples}x{refinement_variance}:{refinement_objective}'})"
     )
 
     trace_counter = {"step": 0, "primitive_steps": 0}
@@ -589,6 +609,7 @@ def parse_args():
     parser.add_argument("--data-root", default=str(DATA_ROOT), help="Wall dataset directory")
     parser.add_argument("--inner-steps", type=int, default=25, help="ALM inner optimizer steps")
     parser.add_argument("--outer-steps", type=int, default=25, help="ALM outer penalty updates")
+    parser.add_argument("--learning-rate", type=float, default=0.05, help="ALM Adam learning rate")
     parser.add_argument("--lambda-action", type=float, default=None, help="Override ALM action regularization weight")
     parser.add_argument(
         "--lambda-action-prior",
@@ -605,6 +626,17 @@ def parse_args():
         help="Scale the ALM dynamics penalty by latent dimensionality ('mean') or use paper-style sum.",
     )
     parser.add_argument(
+        "--history-action-pad",
+        choices=("zeros", "repeat_available"),
+        default="zeros",
+        help="How to fill missing action history when the observation history is shorter than num_hist.",
+    )
+    parser.add_argument(
+        "--no-pad-initial-history",
+        action="store_true",
+        help="Start DINO-WM prediction from available online context instead of repeat-padding to num_hist.",
+    )
+    parser.add_argument(
         "--fix-states-to-video",
         action="store_true",
         help="Keep collocation latents fixed to oracle video latents while solving actions.",
@@ -616,7 +648,23 @@ def parse_args():
     )
     parser.add_argument("--refinement-samples", type=int, default=500, help="Number of random refinement samples")
     parser.add_argument("--refinement-variance", type=float, default=0.3, help="Refinement noise variance")
+    parser.add_argument(
+        "--refinement-objective",
+        choices=("goal", "planner"),
+        default="goal",
+        help="Candidate ranking objective for random refinement.",
+    )
     parser.add_argument("--disable-refinement", action="store_true", help="Disable random action refinement")
+    parser.add_argument(
+        "--wm-history-length",
+        type=int,
+        default=None,
+        help=(
+            "Number of latent/action history frames to pass to DINO-WM during planning. "
+            "Defaults to checkpoint num_hist; use 1 to match DINO-WM's one-frame "
+            "planning rollout path."
+        ),
+    )
     parser.add_argument(
         "--visual-only-guidance",
         action="store_true",
@@ -717,17 +765,22 @@ def main():
                     stats=stats,
                     inner_steps=inner_steps,
                     outer_steps=outer_steps,
+                    learning_rate=args.learning_rate,
                     lambda_action_override=args.lambda_action,
                     lambda_action_prior=args.lambda_action_prior,
                     lambda_goal=args.lambda_goal,
                     lambda_video=args.lambda_video,
                     residual_reduction=args.residual_reduction,
+                    history_action_pad=args.history_action_pad,
+                    pad_initial_history=not args.no_pad_initial_history,
                     fix_states_to_video=args.fix_states_to_video,
                     use_action_reparameterization=not args.disable_action_reparameterization,
                     refinement_samples=refinement_samples,
                     refinement_variance=args.refinement_variance,
+                    refinement_objective=args.refinement_objective,
                     disable_refinement=disable_refinement,
                     visual_only_guidance=args.visual_only_guidance or not args.oracle_proprio_guidance,
+                    wm_history_length=args.wm_history_length,
                     diagnostic_inner_interval=args.debug_inner_every,
                     diagnostic_outer=args.debug_outer,
                     allow_scale_mismatch=args.allow_scale_mismatch,

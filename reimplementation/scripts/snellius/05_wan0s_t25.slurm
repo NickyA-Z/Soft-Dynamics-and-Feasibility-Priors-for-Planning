@@ -28,7 +28,17 @@ WAN_FORCE="${WAN_FORCE:-0}"
 WAN0S_WALL_TARGET_SOURCE="${WAN0S_WALL_TARGET_SOURCE:-env-replay}"
 EVAL_INNER_STEPS="${EVAL_INNER_STEPS:-25}"
 EVAL_OUTER_STEPS="${EVAL_OUTER_STEPS:-25}"
+EVAL_LEARNING_RATE="${EVAL_LEARNING_RATE:-0.05}"
 EVAL_REFINEMENT_SAMPLES="${EVAL_REFINEMENT_SAMPLES:-500}"
+EVAL_REFINEMENT_VARIANCE="${EVAL_REFINEMENT_VARIANCE:-0.3}"
+EVAL_WM_HISTORY_LENGTH="${EVAL_WM_HISTORY_LENGTH:-}"
+if [ -z "${EVAL_NO_PAD_INITIAL_HISTORY+x}" ]; then
+  if [ "${TASK}" = "pusht" ]; then
+    EVAL_NO_PAD_INITIAL_HISTORY=1
+  else
+    EVAL_NO_PAD_INITIAL_HISTORY=0
+  fi
+fi
 
 mkdir -p "${DL2_LOG_DIR}" "${WAN0S_VIDEO_ROOT}"
 
@@ -135,6 +145,20 @@ module load Anaconda3/2025.06-1
 export PYTHONPATH="${REIMPLEMENTATION_ROOT}/src:${DINO_WM_ROOT}:${PYTHONPATH:-}"
 result_json="${DL2_REPORT_DIR}/wan0s_${TASK}_t${RAW_HORIZON}_${SLURM_JOB_ID}.json"
 echo "[wan0s] evaluating generated videos -> ${result_json}"
+eval_extra_args=()
+if [ "${EVAL_DISABLE_REFINEMENT:-0}" = "1" ]; then
+  eval_extra_args+=(--disable-refinement)
+fi
+if [ -n "${EVAL_WM_HISTORY_LENGTH}" ]; then
+  eval_extra_args+=(--wm-history-length "${EVAL_WM_HISTORY_LENGTH}")
+fi
+if [ "${EVAL_NO_PAD_INITIAL_HISTORY}" = "1" ]; then
+  eval_extra_args+=(--no-pad-initial-history)
+fi
+if [ -n "${EVAL_EXTRA_ARGS:-}" ]; then
+  read -r -a parsed_eval_extra_args <<< "${EVAL_EXTRA_ARGS}"
+  eval_extra_args+=("${parsed_eval_extra_args[@]}")
+fi
 "${DINO_WM_PYTHON}" -u -m gvpwm.examples.wan0s_eval \
   --task "${TASK}" \
   --episode-ids "${EPISODE_IDS}" \
@@ -148,6 +172,9 @@ echo "[wan0s] evaluating generated videos -> ${result_json}"
   --wall-target-source "${WAN0S_WALL_TARGET_SOURCE}" \
   --inner-steps "${EVAL_INNER_STEPS}" \
   --outer-steps "${EVAL_OUTER_STEPS}" \
-  --refinement-samples "${EVAL_REFINEMENT_SAMPLES}"
+  --learning-rate "${EVAL_LEARNING_RATE}" \
+  --refinement-samples "${EVAL_REFINEMENT_SAMPLES}" \
+  --refinement-variance "${EVAL_REFINEMENT_VARIANCE}" \
+  "${eval_extra_args[@]}"
 
 echo "[wan0s] completed"

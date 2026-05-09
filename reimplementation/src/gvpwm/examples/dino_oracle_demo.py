@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import pickle
 import random
@@ -58,6 +59,30 @@ def to_runtime_observation(obs):
     }
 
 
+def env_observation(env: gym.Env) -> dict[str, torch.Tensor]:
+    state = env.unwrapped._get_obs()
+    visual = env.unwrapped._render_frame("rgb_array")
+    proprio = state[:2]
+    if getattr(env.unwrapped, "with_velocity", False):
+        proprio = np.concatenate((proprio, state[5:]))
+    return to_runtime_observation({"visual": visual, "proprio": proprio})
+
+
+def env_full_state(env: gym.Env) -> np.ndarray:
+    return np.array(
+        [
+            env.unwrapped.agent.position[0],
+            env.unwrapped.agent.position[1],
+            env.unwrapped.block.position[0],
+            env.unwrapped.block.position[1],
+            env.unwrapped.block.angle,
+            env.unwrapped.agent.velocity[0],
+            env.unwrapped.agent.velocity[1],
+        ],
+        dtype=np.float32,
+    )
+
+
 def step_env(
     env: gym.Env,
     action: torch.Tensor,
@@ -83,6 +108,43 @@ def step_env(
     return to_runtime_observation(obs)
 
 
+def build_env_replay_episode(
+    model_cfg,
+    episode: dict,
+    initial_state: np.ndarray,
+    primitive_action_dim: int,
+    frame_skip: int,
+) -> tuple[dict, np.ndarray]:
+    """Build oracle guidance by replaying the expert segment in this env.
+
+    DINO-WM's reference planner samples a dataset segment, then replays the
+    segment's expert actions in the live environment to define the goal
+    observation/state. This avoids tiny MP4/state-file drift from becoming a
+    visual-planning target mismatch.
+    """
+    replay_env = gym.make(model_cfg.env.name, *model_cfg.env.args, **model_cfg.env.kwargs)
+    reset_out = replay_env.reset()
+    if isinstance(reset_out, tuple):
+        _ = reset_out[0]
+    replay_env.unwrapped._set_state(initial_state)
+
+    video_plan = [env_observation(replay_env)]
+    primitive_actions = episode["rel_actions"].float().numpy() / 100.0
+    for raw_index, primitive_action in enumerate(primitive_actions):
+        replay_env.step(primitive_action.reshape(primitive_action_dim))
+        if (raw_index + 1) % frame_skip == 0:
+            video_plan.append(env_observation(replay_env))
+
+    replayed = dict(episode)
+    replayed["video_plan"] = video_plan
+    replayed["start_obs"] = video_plan[0]
+    replayed["goal_obs"] = video_plan[-1]
+    replayed_goal_state = env_full_state(replay_env)
+    # Do not close the replay env here: PushT's pygame cleanup is global and
+    # can invalidate the execution env that continues rendering during MPC.
+    return replayed, replayed_goal_state
+
+
 def load_model_once(device):
     model_path = DINO_WM_ROOT / "checkpoints" / "outputs" / MODEL_NAME
     model_cfg = OmegaConf.load(model_path / "hydra.yaml")
@@ -97,15 +159,19 @@ def build_planner(
     paper_horizon: int | None = None,
     inner_steps: int = 25,
     outer_steps: int = 25,
+    learning_rate: float = 0.05,
     lambda_action_override: float | None = None,
     lambda_action_prior: float = 0.0,
     lambda_goal: float = 10.0,
     lambda_video: float = 1.0,
     residual_reduction: str = "sum",
+    history_action_pad: str = "zeros",
+    pad_initial_history: bool = True,
     fix_states_to_video: bool = False,
     use_action_reparameterization: bool = True,
     refinement_samples: int = 500,
     refinement_variance: float = 0.3,
+    refinement_objective: str = "goal",
     disable_refinement: bool = False,
     diagnostic_inner_interval: int | None = None,
     diagnostic_outer: bool = False,
@@ -120,7 +186,7 @@ def build_planner(
             alm=ALMConfig(
                 inner_steps=inner_steps,
                 outer_steps=outer_steps,
-                learning_rate=0.05,
+                learning_rate=learning_rate,
                 rho_init=1.0,
                 rho_growth=1.9,
                 rho_max=1_000.0,
@@ -135,6 +201,8 @@ def build_planner(
                 diagnostic_inner_interval=diagnostic_inner_interval,
                 diagnostic_outer=diagnostic_outer,
                 residual_reduction=residual_reduction,
+                history_action_pad=history_action_pad,
+                pad_initial_history=pad_initial_history,
             ),
             mpc=MPCConfig(
                 horizon=horizon,
@@ -145,6 +213,7 @@ def build_planner(
                 enabled=not disable_refinement,
                 num_samples=refinement_samples,
                 noise_variance=refinement_variance,
+                objective=refinement_objective,
             ),
         ),
     )
@@ -219,18 +288,25 @@ def evaluate_episode(
     paper_horizon: int | None = None,
     inner_steps: int = 25,
     outer_steps: int = 25,
+    learning_rate: float = 0.05,
     lambda_action_override: float | None = None,
     lambda_action_prior: float = 0.0,
     lambda_goal: float = 10.0,
     lambda_video: float = 1.0,
     residual_reduction: str = "sum",
+    history_action_pad: str = "zeros",
+    pad_initial_history: bool = True,
+    action_bound_source: str = "dataset",
     fix_states_to_video: bool = False,
     use_action_reparameterization: bool = True,
     refinement_samples: int = 500,
     refinement_variance: float = 0.3,
+    refinement_objective: str = "goal",
     disable_refinement: bool = False,
     expert_action_warmstart: bool = False,
     visual_only_guidance: bool = True,
+    target_source: str = "dataset",
+    wm_history_length: int | None = None,
     diagnostic_inner_interval: int | None = None,
     diagnostic_outer: bool = False,
     model=None,
@@ -278,16 +354,44 @@ def evaluate_episode(
             f"Invalid PushT time scale: action_repeat={action_repeat}, frame_skip={frame_skip}. "
             "Use --frame-skip matching the checkpoint action concatenation."
         )
+    if target_source not in {"dataset", "env-replay"}:
+        raise ValueError(f"Unknown target_source: {target_source}")
 
     action_mean = ACTION_MEAN.to(device=device, dtype=torch.float32)
     action_std = ACTION_STD.to(device=device, dtype=torch.float32)
-    rel_actions = torch.load(split_dir / "rel_actions.pth").float()
-    rel_actions = rel_actions / 100.0
-    rel_actions = (rel_actions - ACTION_MEAN) / ACTION_STD
-    primitive_low = rel_actions.amin(dim=(0, 1)).to(device=device, dtype=torch.float32)
-    primitive_high = rel_actions.amax(dim=(0, 1)).to(device=device, dtype=torch.float32)
+    if action_bound_source == "unit":
+        primitive_low = torch.full(
+            (primitive_action_dim,),
+            -1.0,
+            device=device,
+            dtype=torch.float32,
+        )
+        primitive_high = torch.full(
+            (primitive_action_dim,),
+            1.0,
+            device=device,
+            dtype=torch.float32,
+        )
+    elif action_bound_source == "dataset":
+        rel_actions = torch.load(split_dir / "rel_actions.pth").float()
+        rel_actions = rel_actions / 100.0
+        rel_actions = (rel_actions - ACTION_MEAN) / ACTION_STD
+        primitive_low = rel_actions.amin(dim=(0, 1)).to(device=device, dtype=torch.float32)
+        primitive_high = rel_actions.amax(dim=(0, 1)).to(device=device, dtype=torch.float32)
+    else:
+        raise ValueError(f"Unknown action_bound_source: {action_bound_source}")
     action_low = primitive_low.repeat(action_repeat)
     action_high = primitive_high.repeat(action_repeat)
+
+    goal_state_override = None
+    if target_source == "env-replay":
+        episode, goal_state_override = build_env_replay_episode(
+            model_cfg=model_cfg,
+            episode=episode,
+            initial_state=full_initial_state,
+            primitive_action_dim=primitive_action_dim,
+            frame_skip=frame_skip,
+        )
 
     if not visual_only_guidance:
         # Diagnostic upper bound only: this injects oracle proprio latents from
@@ -301,6 +405,7 @@ def evaluate_episode(
         action_dim=wm_action_dim,
         action_low=action_low,
         action_high=action_high,
+        planning_history_length=wm_history_length,
     )
     planner = build_planner(
         world_model=world_model,
@@ -308,15 +413,19 @@ def evaluate_episode(
         paper_horizon=paper_horizon,
         inner_steps=inner_steps,
         outer_steps=outer_steps,
+        learning_rate=learning_rate,
         lambda_action_override=lambda_action_override,
         lambda_action_prior=lambda_action_prior,
         lambda_goal=lambda_goal,
         lambda_video=lambda_video,
         residual_reduction=residual_reduction,
+        history_action_pad=history_action_pad,
+        pad_initial_history=pad_initial_history,
         fix_states_to_video=fix_states_to_video,
         use_action_reparameterization=use_action_reparameterization,
         refinement_samples=refinement_samples,
         refinement_variance=refinement_variance,
+        refinement_objective=refinement_objective,
         disable_refinement=disable_refinement,
         diagnostic_inner_interval=diagnostic_inner_interval,
         diagnostic_outer=diagnostic_outer,
@@ -325,17 +434,22 @@ def evaluate_episode(
     print(
         f"starting ALM planner "
         f"(split={split}, macro_horizon={horizon}, raw_horizon={paper_horizon}, "
-        f"frame_skip={frame_skip}, I={inner_steps}, O={outer_steps}, gamma=1.9, "
+        f"frame_skip={frame_skip}, I={inner_steps}, O={outer_steps}, lr={learning_rate}, gamma=1.9, "
         f"lambda_action={planner.config.alm.lambda_action}, "
         f"lambda_action_prior={planner.config.alm.lambda_action_prior}, "
         f"lambda_goal={planner.config.alm.lambda_goal}, "
         f"lambda_video={planner.config.alm.lambda_video}, "
         f"residual_reduction={planner.config.alm.residual_reduction}, "
+        f"history_action_pad={planner.config.alm.history_action_pad}, "
+        f"pad_initial_history={planner.config.alm.pad_initial_history}, "
+        f"action_bound_source={action_bound_source}, "
         f"fix_states_to_video={planner.config.alm.fix_states_to_video}, "
         f"action_reparam={planner.config.alm.use_action_reparameterization}, "
         f"expert_action_warmstart={expert_action_warmstart}, "
         f"visual_only_guidance={visual_only_guidance}, "
-        f"refinement={'off' if disable_refinement else f'{refinement_samples}x{refinement_variance}'})"
+        f"target_source={target_source}, "
+        f"wm_history_length={world_model.history_length}/{world_model.model_history_length}, "
+        f"refinement={'off' if disable_refinement else f'{refinement_samples}x{refinement_variance}:{refinement_objective}'})"
     )
     initial_warm_start_actions = None
     if expert_action_warmstart:
@@ -377,18 +491,9 @@ def evaluate_episode(
         ],
         axis=0,
     )
-    cur_state = np.array(
-        [
-            env.unwrapped.agent.position[0],
-            env.unwrapped.agent.position[1],
-            env.unwrapped.block.position[0],
-            env.unwrapped.block.position[1],
-            env.unwrapped.block.angle,
-            env.unwrapped.agent.velocity[0],
-            env.unwrapped.agent.velocity[1],
-        ],
-        dtype=np.float32,
-    )
+    if goal_state_override is not None:
+        goal_state = goal_state_override
+    cur_state = env_full_state(env)
     metrics = env.unwrapped.eval_state(goal_state, cur_state)
     agent_diff = np.linalg.norm(goal_state[:2] - cur_state[:2])
     block_diff = np.linalg.norm(goal_state[2:4] - cur_state[2:4])
@@ -457,6 +562,7 @@ def parse_args():
     parser.add_argument("--sample-seed", type=int, default=99, help="Seed for --sample-targets segment sampling")
     parser.add_argument("--inner-steps", type=int, default=25, help="ALM inner optimizer steps")
     parser.add_argument("--outer-steps", type=int, default=25, help="ALM outer penalty updates")
+    parser.add_argument("--learning-rate", type=float, default=0.05, help="ALM Adam learning rate")
     parser.add_argument("--lambda-action", type=float, default=None, help="Override ALM action regularization weight")
     parser.add_argument(
         "--lambda-action-prior",
@@ -473,6 +579,23 @@ def parse_args():
         help="Scale the ALM dynamics penalty by latent dimensionality ('mean') or use paper-style sum.",
     )
     parser.add_argument(
+        "--history-action-pad",
+        choices=("zeros", "repeat_available"),
+        default="zeros",
+        help="How to fill missing action history when the observation history is shorter than num_hist.",
+    )
+    parser.add_argument(
+        "--no-pad-initial-history",
+        action="store_true",
+        help="Start DINO-WM prediction from available online context instead of repeat-padding to num_hist.",
+    )
+    parser.add_argument(
+        "--action-bound-source",
+        choices=("dataset", "unit"),
+        default="dataset",
+        help="Action bounds for tanh/clamp in normalized action space.",
+    )
+    parser.add_argument(
         "--fix-states-to-video",
         action="store_true",
         help="Keep collocation latents fixed to oracle video latents while solving actions.",
@@ -484,7 +607,23 @@ def parse_args():
     )
     parser.add_argument("--refinement-samples", type=int, default=500, help="Number of random refinement samples")
     parser.add_argument("--refinement-variance", type=float, default=0.3, help="Refinement noise variance")
+    parser.add_argument(
+        "--refinement-objective",
+        choices=("goal", "planner"),
+        default="goal",
+        help="Candidate ranking objective for random refinement.",
+    )
     parser.add_argument("--disable-refinement", action="store_true", help="Disable random action refinement")
+    parser.add_argument(
+        "--wm-history-length",
+        type=int,
+        default=None,
+        help=(
+            "Number of latent/action history frames to pass to DINO-WM during planning. "
+            "Defaults to the checkpoint num_hist; use 1 to match DINO-WM's one-frame "
+            "planning rollout path."
+        ),
+    )
     parser.add_argument(
         "--expert-action-warmstart",
         action="store_true",
@@ -500,9 +639,16 @@ def parse_args():
         action="store_true",
         help="Diagnostic only: include oracle proprio latents in video/goal losses.",
     )
+    parser.add_argument(
+        "--target-source",
+        choices=("dataset", "env-replay"),
+        default="dataset",
+        help="Use the raw dataset video/state target or a live-env expert replay target.",
+    )
     parser.add_argument("--quick", action="store_true", help="Use small ALM/refinement settings for smoke tests")
     parser.add_argument("--debug-inner-every", type=int, default=None, help="Print ALM diagnostics every N inner iterations")
     parser.add_argument("--debug-outer", action="store_true", help="Print diagnostics after every ALM outer iteration")
+    parser.add_argument("--output-json", default=None, help="Optional compact machine-readable summary path")
     return parser.parse_args()
 
 
@@ -558,6 +704,7 @@ def main():
     print(f"Selected episode specs: {eval_specs}")
 
     results = []
+    errors = []
     for idx, start_offset in eval_specs:
         print(f"\n=== Episode {idx} offset {start_offset} ===")
         try:
@@ -571,18 +718,25 @@ def main():
                     paper_horizon=paper_horizon,
                     inner_steps=inner_steps,
                     outer_steps=outer_steps,
+                    learning_rate=args.learning_rate,
                     lambda_action_override=args.lambda_action,
                     lambda_action_prior=args.lambda_action_prior,
                     lambda_goal=args.lambda_goal,
                     lambda_video=args.lambda_video,
                     residual_reduction=args.residual_reduction,
+                    history_action_pad=args.history_action_pad,
+                    pad_initial_history=not args.no_pad_initial_history,
+                    action_bound_source=args.action_bound_source,
                     fix_states_to_video=args.fix_states_to_video,
                     use_action_reparameterization=not args.disable_action_reparameterization,
                     refinement_samples=refinement_samples,
                     refinement_variance=args.refinement_variance,
+                    refinement_objective=args.refinement_objective,
                     disable_refinement=disable_refinement,
                     expert_action_warmstart=args.expert_action_warmstart,
                     visual_only_guidance=args.visual_only_guidance or not args.oracle_proprio_guidance,
+                    target_source=args.target_source,
+                    wm_history_length=args.wm_history_length,
                     diagnostic_inner_interval=args.debug_inner_every,
                     diagnostic_outer=args.debug_outer,
                     model=model,
@@ -595,6 +749,13 @@ def main():
 
             print(f"[ep {idx}] ERROR: {exc}")
             traceback.print_exc()
+            errors.append(
+                {
+                    "episode_idx": int(idx),
+                    "start_offset": int(start_offset),
+                    "error": str(exc),
+                }
+            )
 
     print("\n=== Evaluation Summary ===")
     for result in results:
@@ -608,7 +769,41 @@ def main():
             f"mean_state_dist: {mean_dist:.2f}  "
             f"mean_dyn_res: {mean_dyn:.4f}"
         )
+    else:
+        success_rate = None
+        mean_dist = None
+        mean_dyn = None
+
+    if args.output_json is not None:
+        output_path = Path(args.output_json)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        summary = {
+            "split": args.split,
+            "raw_horizon": int(paper_horizon),
+            "frame_skip": int(frame_skip),
+            "macro_horizon": int(macro_horizon),
+            "num_requested": int(len(eval_specs)),
+            "num_completed": int(len(results)),
+            "num_errors": int(len(errors)),
+            "success_rate": success_rate,
+            "mean_state_dist": mean_dist,
+            "mean_dyn_residual": mean_dyn,
+            "selected_episode_specs": [
+                {"episode_idx": int(idx), "start_offset": int(offset)}
+                for idx, offset in eval_specs
+            ],
+            "results": results,
+            "errors": errors,
+        }
+        output_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except BaseException as exc:
+        import traceback
+
+        print(f"[fatal] {type(exc).__name__}: {exc}", flush=True)
+        traceback.print_exc()
+        raise

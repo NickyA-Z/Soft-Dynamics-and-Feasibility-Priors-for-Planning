@@ -14,16 +14,35 @@ class DinoWorldModelAdapter(WorldModelAdapter):
         action_dim: int,
         action_low: torch.Tensor | float = -1.0,
         action_high: torch.Tensor | float = 1.0,
+        planning_history_length: int | None = None,
         observation_transform: Callable[[Any], Any] | None = None,
     ) -> None:
+        model_history_length = int(world_model.num_hist)
+        history_length = (
+            model_history_length
+            if planning_history_length is None
+            else int(planning_history_length)
+        )
+        if history_length < 1:
+            raise ValueError(f"planning_history_length must be >= 1, got {history_length}.")
+        if history_length > model_history_length:
+            raise ValueError(
+                "planning_history_length cannot exceed checkpoint num_hist "
+                f"({model_history_length}), got {history_length}."
+            )
         super().__init__(
-            history_length=int(world_model.num_hist),
+            history_length=history_length,
             action_dim=int(action_dim),
             action_low=action_low,
             action_high=action_high,
         )
         self.world_model = world_model
+        self.model_history_length = model_history_length
         self.observation_transform = observation_transform
+        # Planning/evaluation is inference-only. Some released DINO-WM
+        # checkpoints restore the frozen DINO encoder in train mode, so make the
+        # full world model deterministic before encoding or predicting latents.
+        self.world_model.eval()
         # Freeze world model weights: ALM/planning only optimizes latent/action
         # parameters, not the world model itself. Without this, every backward
         # pass wastefully computes (and discards) gradients for all Transformer

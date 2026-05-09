@@ -137,6 +137,7 @@ def evaluate_wall(
         action_dim=wm_action_dim,
         action_low=action_low,
         action_high=action_high,
+        planning_history_length=args.wm_history_length,
     )
     planner = build_wall_planner(
         world_model=world_model,
@@ -144,13 +145,17 @@ def evaluate_wall(
         paper_horizon=args.raw_horizon,
         inner_steps=args.inner_steps,
         outer_steps=args.outer_steps,
+        learning_rate=args.learning_rate,
         lambda_action_override=args.lambda_action,
         lambda_goal=args.lambda_goal,
         lambda_video=args.lambda_video,
         residual_reduction=args.residual_reduction,
+        history_action_pad=args.history_action_pad,
+        pad_initial_history=not args.no_pad_initial_history,
         use_action_reparameterization=not args.disable_action_reparameterization,
         refinement_samples=args.refinement_samples,
         refinement_variance=args.refinement_variance,
+        refinement_objective=args.refinement_objective,
         disable_refinement=args.disable_refinement,
     )
 
@@ -230,16 +235,25 @@ def evaluate_pusht(
 
     action_mean = ACTION_MEAN.to(device=device, dtype=torch.float32)
     action_std = ACTION_STD.to(device=device, dtype=torch.float32)
-    rel_actions = torch.load(split_dir / "rel_actions.pth").float()
-    rel_actions = (rel_actions / 100.0 - ACTION_MEAN) / ACTION_STD
-    action_low = rel_actions.amin(dim=(0, 1)).to(device=device, dtype=torch.float32).repeat(action_repeat)
-    action_high = rel_actions.amax(dim=(0, 1)).to(device=device, dtype=torch.float32).repeat(action_repeat)
+    if args.action_bound_source == "unit":
+        primitive_low = torch.full((primitive_action_dim,), -1.0, device=device, dtype=torch.float32)
+        primitive_high = torch.full((primitive_action_dim,), 1.0, device=device, dtype=torch.float32)
+    elif args.action_bound_source == "dataset":
+        rel_actions = torch.load(split_dir / "rel_actions.pth").float()
+        rel_actions = (rel_actions / 100.0 - ACTION_MEAN) / ACTION_STD
+        primitive_low = rel_actions.amin(dim=(0, 1)).to(device=device, dtype=torch.float32)
+        primitive_high = rel_actions.amax(dim=(0, 1)).to(device=device, dtype=torch.float32)
+    else:
+        raise ValueError(f"Unknown action_bound_source: {args.action_bound_source}")
+    action_low = primitive_low.repeat(action_repeat)
+    action_high = primitive_high.repeat(action_repeat)
 
     world_model = DinoWorldModelAdapter(
         world_model=model,
         action_dim=wm_action_dim,
         action_low=action_low,
         action_high=action_high,
+        planning_history_length=args.wm_history_length,
     )
     planner = build_pusht_planner(
         world_model=world_model,
@@ -247,13 +261,17 @@ def evaluate_pusht(
         paper_horizon=args.raw_horizon,
         inner_steps=args.inner_steps,
         outer_steps=args.outer_steps,
+        learning_rate=args.learning_rate,
         lambda_action_override=args.lambda_action,
         lambda_goal=args.lambda_goal,
         lambda_video=args.lambda_video,
         residual_reduction=args.residual_reduction,
+        history_action_pad=args.history_action_pad,
+        pad_initial_history=not args.no_pad_initial_history,
         use_action_reparameterization=not args.disable_action_reparameterization,
         refinement_samples=args.refinement_samples,
         refinement_variance=args.refinement_variance,
+        refinement_objective=args.refinement_objective,
         disable_refinement=args.disable_refinement,
     )
 
@@ -309,6 +327,7 @@ def evaluate_pusht(
         "generated_frames": len(video_plan),
         "executed_actions": int(result.executed_actions.shape[0]),
         "dynamics_residual": float(result.steps[-1].dynamics_residual_norm),
+        "action_bound_source": args.action_bound_source,
     }
 
 
@@ -330,10 +349,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--inner-steps", type=int, default=25)
     parser.add_argument("--outer-steps", type=int, default=25)
+    parser.add_argument("--learning-rate", type=float, default=0.05)
     parser.add_argument("--lambda-action", type=float, default=None)
     parser.add_argument("--lambda-goal", type=float, default=10.0)
     parser.add_argument("--lambda-video", type=float, default=1.0)
     parser.add_argument("--residual-reduction", choices=("mean", "sum"), default="sum")
+    parser.add_argument("--history-action-pad", choices=("zeros", "repeat_available"), default="zeros")
+    parser.add_argument(
+        "--action-bound-source",
+        choices=("dataset", "unit"),
+        default="dataset",
+        help="PushT action bounds for tanh/clamp in normalized action space.",
+    )
+    parser.add_argument(
+        "--no-pad-initial-history",
+        action="store_true",
+        help="Start DINO-WM prediction from available online context instead of repeat-padding to num_hist.",
+    )
     parser.add_argument("--disable-action-reparameterization", action="store_true")
     parser.add_argument(
         "--wall-env-action-scale",
@@ -349,7 +381,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--refinement-samples", type=int, default=500)
     parser.add_argument("--refinement-variance", type=float, default=0.3)
+    parser.add_argument("--refinement-objective", choices=("goal", "planner"), default="goal")
     parser.add_argument("--disable-refinement", action="store_true")
+    parser.add_argument(
+        "--wm-history-length",
+        type=int,
+        default=None,
+        help=(
+            "Number of latent/action history frames to pass to DINO-WM during planning. "
+            "Defaults to checkpoint num_hist; use 1 to match DINO-WM's one-frame "
+            "planning rollout path."
+        ),
+    )
     return parser.parse_args()
 
 
