@@ -86,6 +86,8 @@ def prepare_wall(args: argparse.Namespace) -> list[dict]:
                 raw_horizon=args.raw_horizon,
                 frame_skip=args.frame_skip,
                 prompt=args.prompt or prompt_for_task("wall"),
+                width=args.width,
+                height=args.height,
             )
         )
     return records
@@ -115,6 +117,8 @@ def prepare_pusht(args: argparse.Namespace) -> list[dict]:
                 raw_horizon=args.raw_horizon,
                 frame_skip=args.frame_skip,
                 prompt=args.prompt or prompt_for_task("pusht"),
+                width=args.width,
+                height=args.height,
             )
         )
     return records
@@ -132,6 +136,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split", default="all", help="Wall uses all by default; PushT usually uses val")
     parser.add_argument("--raw-horizon", type=int, default=25)
     parser.add_argument("--frame-skip", type=int, default=5)
+    parser.add_argument("--width", type=int, default=1280, help="WAN conditioning image width")
+    parser.add_argument("--height", type=int, default=720, help="WAN conditioning image height")
     parser.add_argument("--data-root", default=None)
     parser.add_argument("--output-root", default=os.environ.get("WAN0S_VIDEO_ROOT", "wan0s_videos"))
     parser.add_argument("--prompt", default=None, help="Override the default Chinese FLF2V prompt")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import random
 import sys
@@ -691,6 +692,7 @@ def parse_args():
     )
     parser.add_argument("--debug-inner-every", type=int, default=None, help="Print ALM diagnostics every N inner iterations")
     parser.add_argument("--debug-outer", action="store_true", help="Print diagnostics after every ALM outer iteration")
+    parser.add_argument("--output-json", default=None, help="Optional compact machine-readable summary path")
     return parser.parse_args()
 
 
@@ -750,6 +752,7 @@ def main():
     print(f"Selected episode specs: {eval_specs}")
 
     results = []
+    errors = []
     for idx, start_offset in eval_specs:
         print(f"\n=== Wall Episode {idx} offset {start_offset} ===")
         try:
@@ -796,6 +799,13 @@ def main():
 
             print(f"[wall ep {idx}] ERROR: {exc}")
             traceback.print_exc()
+            errors.append(
+                {
+                    "episode_idx": int(idx),
+                    "start_offset": int(start_offset),
+                    "error": str(exc),
+                }
+            )
 
     print("\n=== Wall Evaluation Summary ===")
     for result in results:
@@ -809,6 +819,33 @@ def main():
             f"mean_state_dist: {mean_dist:.2f}  "
             f"mean_dyn_res: {mean_dyn:.4f}"
         )
+    else:
+        success_rate = None
+        mean_dist = None
+        mean_dyn = None
+
+    if args.output_json is not None:
+        output_path = Path(args.output_json)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        summary = {
+            "split": args.split,
+            "raw_horizon": int(paper_horizon),
+            "frame_skip": int(frame_skip),
+            "macro_horizon": int(macro_horizon),
+            "num_requested": int(len(eval_specs)),
+            "num_completed": int(len(results)),
+            "num_errors": int(len(errors)),
+            "success_rate": success_rate,
+            "mean_state_dist": mean_dist,
+            "mean_dyn_residual": mean_dyn,
+            "selected_episode_specs": [
+                {"episode_idx": int(idx), "start_offset": int(offset)}
+                for idx, offset in eval_specs
+            ],
+            "results": results,
+            "errors": errors,
+        }
+        output_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":

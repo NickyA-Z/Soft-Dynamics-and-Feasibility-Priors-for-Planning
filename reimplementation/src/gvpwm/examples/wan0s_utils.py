@@ -105,6 +105,8 @@ def write_wan0s_case(
     raw_horizon: int,
     frame_skip: int,
     prompt: str | None = None,
+    width: int = WAN_SIZE[0],
+    height: int = WAN_SIZE[1],
 ) -> dict[str, Any]:
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -113,8 +115,9 @@ def write_wan0s_case(
     prompt_path = out / "prompt.txt"
     metadata_path = out / "metadata.json"
 
-    letterbox_for_wan(visual_to_uint8_hwc(start_visual)).save(first_frame)
-    letterbox_for_wan(visual_to_uint8_hwc(goal_visual)).save(last_frame)
+    wan_size = (int(width), int(height))
+    letterbox_for_wan(visual_to_uint8_hwc(start_visual), size=wan_size).save(first_frame)
+    letterbox_for_wan(visual_to_uint8_hwc(goal_visual), size=wan_size).save(last_frame)
     prompt = prompt or prompt_for_task(task)
     prompt_path.write_text(prompt, encoding="utf-8")
 
@@ -124,6 +127,8 @@ def write_wan0s_case(
         "start_offset": int(start_offset),
         "raw_horizon": int(raw_horizon),
         "frame_skip": int(frame_skip),
+        "width": int(width),
+        "height": int(height),
         "first_frame": str(first_frame),
         "last_frame": str(last_frame),
         "prompt": prompt,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +65,15 @@ def _case_dir_name(episode_idx: int, start_offset: int) -> str:
     return f"episode_{episode_idx:03d}_offset_{start_offset:03d}"
 
 
+def seed_episode(episode_idx: int, start_offset: int) -> None:
+    seed = int(episode_idx * 100_000 + start_offset)
+    random.seed(seed)
+    np.random.seed(seed % (2**32 - 1))
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 def _prepare_wall_env(env: gym.Env, episode: dict[str, Any], episode_idx: int) -> None:
     env.unwrapped.update_env(episode["env_info"])
     init_state = episode["states"][0].detach().cpu().numpy()
@@ -76,12 +86,22 @@ def _current_wall_state(env: gym.Env) -> np.ndarray:
     return env.unwrapped.dot_position.detach().cpu().numpy().astype(np.float32)
 
 
-def _wall_episode_video_path(video_root: Path, episode_idx: int, start_offset: int) -> Path:
-    return video_root / "wall" / _case_dir_name(episode_idx, start_offset) / "wan0s.mp4"
+def _wall_episode_video_path(
+    video_root: Path,
+    episode_idx: int,
+    start_offset: int,
+    video_filename: str,
+) -> Path:
+    return video_root / "wall" / _case_dir_name(episode_idx, start_offset) / video_filename
 
 
-def _pusht_episode_video_path(video_root: Path, episode_idx: int, start_offset: int) -> Path:
-    return video_root / "pusht" / _case_dir_name(episode_idx, start_offset) / "wan0s.mp4"
+def _pusht_episode_video_path(
+    video_root: Path,
+    episode_idx: int,
+    start_offset: int,
+    video_filename: str,
+) -> Path:
+    return video_root / "pusht" / _case_dir_name(episode_idx, start_offset) / video_filename
 
 
 def evaluate_wall(
@@ -159,7 +179,12 @@ def evaluate_wall(
         disable_refinement=args.disable_refinement,
     )
 
-    video_path = _wall_episode_video_path(Path(args.video_root), episode_idx, start_offset)
+    video_path = _wall_episode_video_path(
+        Path(args.video_root),
+        episode_idx,
+        start_offset,
+        args.video_filename,
+    )
     video_plan = load_wan_video_plan(video_path, task="wall", image_size=args.image_size)
     print(f"[wan0s wall ep {episode_idx}] using video={video_path} frames={len(video_plan)}")
 
@@ -275,7 +300,12 @@ def evaluate_pusht(
         disable_refinement=args.disable_refinement,
     )
 
-    video_path = _pusht_episode_video_path(Path(args.video_root), episode_idx, start_offset)
+    video_path = _pusht_episode_video_path(
+        Path(args.video_root),
+        episode_idx,
+        start_offset,
+        args.video_filename,
+    )
     video_plan = load_wan_video_plan(video_path, task="pusht", image_size=args.image_size)
     print(f"[wan0s pusht ep {episode_idx}] using video={video_path} frames={len(video_plan)}")
 
@@ -344,6 +374,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--raw-horizon", type=int, default=25)
     parser.add_argument("--frame-skip", type=int, default=5)
     parser.add_argument("--video-root", default=os.environ.get("WAN0S_VIDEO_ROOT", "wan0s_videos"))
+    parser.add_argument("--video-filename", default="wan0s.mp4")
     parser.add_argument("--data-root", default=None)
     parser.add_argument("--output-json", default=None)
     parser.add_argument("--image-size", type=int, default=224)
@@ -423,6 +454,7 @@ def main() -> None:
     )
     for episode_idx, start_offset in eval_specs:
         try:
+            seed_episode(episode_idx, start_offset)
             result = evaluator(
                 args,
                 episode_idx,
