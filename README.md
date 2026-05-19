@@ -18,7 +18,7 @@ The current project includes:
 - Paired DINO-WM residual experiments
 - Push-T evaluation scripts
 
-## Repository structure EXSTENSION
+## Repository structure EXTENSION
 
 The most relevant code is in:
 
