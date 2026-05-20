@@ -113,14 +113,29 @@ def load_wall_oracle_episode(
     frames_path = base / "obses" / f"episode_{episode_idx:03d}.pth"
     frames = torch.load(frames_path)
 
-    length = int(min(states.shape[1], frames.shape[0]))
+    length = int(frames.shape[0])
     if length <= 1:
         raise ValueError(f"Episode {episode_idx} has non-positive usable length: {length}")
 
-    episode_states = states[episode_idx, :length]
-    episode_actions = actions[episode_idx, : max(length - 1, 0)]
+    episode_states = states[episode_idx, : min(int(states.shape[1]), length)]
+    if episode_states.shape[0] < length:
+        pad = episode_states[-1:].repeat(length - episode_states.shape[0], 1)
+        episode_states = torch.cat([episode_states, pad], dim=0)
+    episode_actions = actions[episode_idx]
     episode_actions_norm = (episode_actions - stats["action_mean"]) / stats["action_std"]
     episode_proprio = (episode_states - stats["proprio_mean"]) / stats["proprio_std"]
+    episode_doors = door_locations[episode_idx, : min(int(door_locations.shape[1]), length)]
+    episode_walls = wall_locations[episode_idx, : min(int(wall_locations.shape[1]), length)]
+    if episode_doors.shape[0] < length:
+        episode_doors = torch.cat(
+            [episode_doors, episode_doors[-1:].repeat(length - episode_doors.shape[0], 1)],
+            dim=0,
+        )
+    if episode_walls.shape[0] < length:
+        episode_walls = torch.cat(
+            [episode_walls, episode_walls[-1:].repeat(length - episode_walls.shape[0], 1)],
+            dim=0,
+        )
 
     video_plan = [
         make_wall_observation(frames[t], episode_proprio[t])
@@ -140,8 +155,8 @@ def load_wall_oracle_episode(
         "actions_normalized": episode_actions_norm,
         "states": episode_states,
         "proprio": episode_proprio,
-        "door_locations": door_locations[episode_idx, :length],
-        "wall_locations": wall_locations[episode_idx, :length],
+        "door_locations": episode_doors,
+        "wall_locations": episode_walls,
         "env_info": env_info,
         "length": length,
         **stats,
@@ -303,9 +318,10 @@ def candidate_wall_episodes(base_dir: str | Path, horizon: int, frame_skip: int)
     base = Path(base_dir)
     states = torch.load(base / "states.pth")
     actions = torch.load(base / "actions.pth")
+    first_frames = torch.load(base / "obses" / "episode_000.pth")
     required_frames = horizon * frame_skip + 1
     required_actions = horizon * frame_skip
-    if states.shape[1] < required_frames or actions.shape[1] < required_actions:
+    if first_frames.shape[0] < required_frames or actions.shape[1] < required_actions:
         return []
     return list(range(int(states.shape[0])))
 

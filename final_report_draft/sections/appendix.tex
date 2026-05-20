@@ -1,0 +1,410 @@
+\section{Appendix A}
+\subsection{Formulas}
+This section summarizes the objectives implemented in the planner using notation close to the original ALM latent-collocation formulation. Let
+\(\mathcal{Z}=\{z_0,\ldots,z_T\}\) denote the optimized latent trajectory and
+\(\mathcal{A}=\{a_0,\ldots,a_{T-1}\}\) denote the optimized macro-action sequence. Each \(a_t\in\mathbb{R}^{d_a}\) is a macro-action. In Push-T, \(d_a=10\), corresponding to five consecutive 2D primitive actions packed into one action vector:
+\[
+a_t = [u_{5t},u_{5t+1},u_{5t+2},u_{5t+3},u_{5t+4}],
+\qquad
+u_i\in\mathbb{R}^2.
+\]
+We write \(h_t\) for the history window used by the world model. Depending on the model, this may contain only latent history \(z_{t-H+1:t}\), or both latent and action history. The pretrained DINO-WM dynamics are denoted by \(f_\psi\).
+
+\paragraph{Base latent task cost.}
+Following the ALM formulation, we define a latent-space task cost
+\[
+min_{\mathcal{Z},\mathcal{A}}
+\lambda_v
+\sum_{t=1}^{T}
+\mathcal{L}_{\mathrm{vid}}(z_t,z_t^{\mathrm{vid}})
++
+\lambda_g
+\mathcal{L}_{\mathrm{goal}}(z_T,z_g)
++
+\lambda_r
+\sum_{t=0}^{T-1}
+\|a_t\|_2^2 .
+\]
+Here, the first term aligns the optimized latent trajectory with the generated video plan, the second term penalizes terminal goal error, and the final term regularizes action magnitude.
+
+\paragraph{Original ALM dynamics objective.}
+The original latent-collocation planner treats both \(\mathcal{Z}\) and \(\mathcal{A}\) as optimization variables and enforces consistency with the pretrained world model through the dynamics violation
+\[
+\mathcal{L}^t_{dyn}(\mathcal{Z},\mathcal{A};f_\psi )
+=
+z_{t+1}-f_\psi(h_t,a_t).
+\]
+The augmented Lagrangian objective is
+\[
+\mathcal{L}_{\rho}(\mathcal{Z},\mathcal{A},\Lambda)
+=
+\tilde C(\mathcal{Z},\mathcal{A})
++
+\sum_{t=0}^{T-1}
+\left[
+\lambda_t^\top \mathcal{L}^t_{dyn}(\mathcal{Z},\mathcal{A})
++
+\frac{\rho}{2}
+\|\mathcal{L}^t_{dyn}||_2^2
+\right],
+\]
+where \(\Lambda\) are the dual variables and \(\rho\) is the quadratic penalty weight. After each outer ALM iteration, we update
+\[
+\lambda_t \leftarrow \lambda_t+\rho \mathcal{L}_{dyn}(\mathcal{Z},\mathcal{A}),
+\qquad
+\rho \leftarrow \min(\gamma\rho,\rho_{\max}).
+\]
+
+\paragraph{Soft DINO-WM dynamics.}
+As a simpler baseline, we remove the dual variables and use the DINO-WM residual as a soft penalty:
+\[
+\mathcal{L}_{\mathrm{soft}}(\mathcal{Z},\mathcal{A})
+=
+\tilde C(\mathcal{Z},\mathcal{A})
++
+\lambda_{\mathrm{dyn}}
+\sum_{t=0}^{T-1}
+\|z_{t+1}-f_\psi(h_t,a_t)\|_2^2 .
+\]
+This keeps the same collocation variables \((\mathcal{Z},\mathcal{A})\), but replaces the ALM constraint update by a fixed-weight dynamics penalty.
+
+\paragraph{DSM feasibility model.}
+We train a conditional denoising model \(\epsilon_\phi\) in the DINO-WM latent space. For a dataset transition \((h_t,a_t,z_{t+1})\), we sample
+\[
+\epsilon\sim\mathcal{N}(0,I),
+\qquad
+\sigma\sim p(\sigma),
+\]
+and corrupt the next latent as
+\[
+\tilde z_{t+1}=z_{t+1}+\sigma\epsilon.
+\]
+The DSM objective is the mean-squared denoising error over the latent dimensions:
+\[
+\mathcal{L}_{\mathrm{DSM}}(\phi)
+=
+\mathbb{E}_{t,\sigma,\epsilon}
+\left[
+\frac{1}{D}
+\left\|
+\epsilon_\phi(\tilde z_{t+1},h_t,a_t,\sigma)-\epsilon
+\right\|_2^2
+\right],
+\]
+where \(D\) is the dimensionality of the DINO-WM latent. At planning time, the trained denoising model defines a feasibility energy at a fixed noise level \(\sigma^\ast\):
+\[
+\mathcal{P}_{\mathrm{DSM}}(z_{t+1},h_t,a_t)
+=
+\frac{1}{D}
+\left\|
+\epsilon_\phi(z_{t+1},h_t,a_t,\sigma^\ast)
+\right\|_2^2 .
+\]
+
+\paragraph{DSM feasibility planning.}
+The feasibility-only variant removes the DINO-WM dynamics constraint and augments the task cost with the learned DSM energy:
+\[
+\mathcal{L}_{\mathrm{feas}}(\mathcal{Z},\mathcal{A})
+=
+\tilde C(\mathcal{Z},\mathcal{A})
++
+\lambda_{\mathrm{feas}}
+\frac{1}{T}
+\sum_{t=0}^{T-1}
+\mathcal{P}_{\mathrm{DSM}}(z_{t+1},h_t,a_t).
+\]
+Unlike the ALM objective, this formulation does not enforce
+\[
+z_{t+1}=f_\psi(h_t,a_t),
+\]
+so the latent trajectory remains a free optimization variable.
+
+\paragraph{Anti-stillness diagnostic.}
+To test whether feasibility-only planning collapses to small actions, we add an anti-stillness term
+\[
+\mathcal{L}_{\mathrm{anti}}(\mathcal{A})
+=
+\lambda_{\mathrm{anti}}
+\frac{1}{T}
+\sum_{t=0}^{T-1}
+\max(0,m-\|a_t\|_2)^2 .
+\]
+The resulting objective is
+\[
+\mathcal{L}_{\mathrm{feas+anti}}
+=
+\mathcal{L}_{\mathrm{feas}}
++
+\mathcal{L}_{\mathrm{anti}}.
+\]
+This can be seen as the opposite of the last term in the base task where action magnitude is penalized. 
+\paragraph{Learned transition head: current-delta target.}
+In addition to the DSM head, we train a transition head \(\Delta_\phi\). In the current-delta variant, the target is the latent displacement
+\[
+\Delta_t = z_{t+1}-z_t.
+\]
+The training loss is
+\[
+\mathcal{L}_{\Delta}(\phi)
+=
+\mathbb{E}_{t}
+\left[
+\left\|
+\Delta_\phi(h_t,a_t)-(z_{t+1}-z_t)
+\right\|_2^2
+\right].
+\]
+At planning time, this gives the transition energy
+\[
+\mathcal{P}_{\Delta}(z_{t+1},h_t,a_t)
+=
+\left\|
+z_{t+1}
+-
+\left(z_t+\Delta_\phi(h_t,a_t)\right)
+\right\|_2^2 .
+\]
+
+\paragraph{Learned transition head: paired DINO-WM residual target.}
+We also consider a paired residual target relative to the pretrained world model:
+\[
+r_t^\psi
+=
+z_{t+1}-f_\psi(h_t,a_t).
+\]
+The residual head \(r_\phi\) is trained with
+\[
+\mathcal{L}_{\mathrm{res}}(\phi)
+=
+\mathbb{E}_{t}
+\left[
+\left\|
+r_\phi(h_t,a_t)
+-
+\left(z_{t+1}-f_\psi(h_t,a_t)\right)
+\right\|_2^2
+\right].
+\]
+The corresponding planning-time transition energy is
+\[
+\mathcal{P}_{\mathrm{res}}(z_{t+1},h_t,a_t)
+=
+\left\|
+z_{t+1}
+-
+\left(f_\psi(h_t,a_t)+r_\phi(h_t,a_t)\right)
+\right\|_2^2 .
+\]
+
+\paragraph{Combined dynamics and feasibility objective.}
+The learned feasibility terms can be added to either ALM or soft dynamics. In the soft-dynamics case, the combined objective is
+\[
+\mathcal{L}_{\mathrm{soft+feas}}
+=
+\tilde C(\mathcal{Z},\mathcal{A})
++
+\lambda_{\mathrm{dyn}}
+\sum_{t=0}^{T-1}
+\|z_{t+1}-f_\psi(h_t,a_t)\|_2^2
++
+\lambda_{\mathrm{feas}}
+\sum_{t=0}^{T-1}
+\mathcal{P}_{\mathrm{DSM}}(z_{t+1},h_t,a_t)
++
+\lambda_{\mathrm{transition}}
+\sum_{t=0}^{T-1}
+\mathcal{P}_{\mathrm{trans}}(z_{t+1},h_t,a_t),
+\]
+where \(\mathcal{P}_{\mathrm{trans}}\) is either
+\(\mathcal{P}_{\Delta}\) for the current-delta model or
+\(\mathcal{P}_{\mathrm{res}}\) for the paired residual model. Setting
+\(\lambda_{\mathrm{transition}}=0\) gives DSM-only feasibility as an auxillary on the soft dynamics.
+
+\paragraph{DINO-WM rollout planning.}
+In rollout mode, we no longer optimize \(\mathcal{Z}\) directly. Instead, the planner optimizes only the action sequence \(\mathcal{A}\), and the latent trajectory is generated recursively by DINO-WM:
+\[
+z_{t+1}=f_\psi(h_t,a_t).
+\]
+Thus, dynamics consistency is enforced by construction rather than by an ALM residual. The rollout objective is
+\[
+\mathcal{L}_{\mathrm{rollout}}
+=
+\tilde C(\mathcal{Z}(\mathcal{A}),\mathcal{A})
++
+\lambda_{\mathrm{feas}}
+\sum_{t=0}^{T-1}
+\mathcal{P}_{\mathrm{DSM}}(z_{t+1},h_t,a_t)
++
+\lambda_{\mathrm{transition}}
+\sum_{t=0}^{T-1}
+\mathcal{P}_{\mathrm{trans}}(z_{t+1},h_t,a_t).
+\]
+For pure DSM rollout, we set
+\[
+\lambda_{\mathrm{transition}}=0,
+\qquad
+\lambda_{\mathrm{dyn}}=0,
+\]
+
+
+\paragraph{Action bounds and reparameterization.}
+All planner variants optimize bounded normalized DINO-WM actions. When action reparameterization is enabled, we optimize an unconstrained variable \(u_t\) and map it to the valid action range:
+\[
+a_t
+=
+a_{\min}
++
+\frac{1}{2}
+\left(\tanh(u_t)+1\right)
+(a_{\max}-a_{\min}).
+\]
+When reparameterization is disabled, \(a_t\) is optimized directly and clamped to
+\([a_{\min},a_{\max}]\).
+
+\paragraph{Expert-action prior diagnostic.}
+For oracle warm-start experiments, we additionally penalize deviation from a reference action sequence \(\mathcal{A}^{\mathrm{prior}}\):
+\[
+\mathcal{L}_{\mathrm{prior}}
+=
+\lambda_{\mathrm{prior}}
+\frac{1}{T}
+\sum_{t=0}^{T-1}
+\|a_t-a_t^{\mathrm{prior}}\|_2^2 .
+\]
+This term is used only as a diagnostic to test whether rollout optimization can remain in the expert-action basin.
+
+
+\section{have done}
+\subsection{Soft DINO-WM Dynamics Ablation}
+\label{app:soft_dynamics_ablation}
+
+We evaluate a soft DINO-WM dynamics baseline on Push-T to isolate the effect of the pretrained world-model residual and the action regularization weight. In these runs, the dynamics constraint is not handled with ALM dual updates; instead, we use a fixed soft penalty
+\[
+\mathcal{L}_{\mathrm{soft}}
+=
+\tilde C(\mathcal{Z},\mathcal{A})
++
+\lambda_{\mathrm{dyn}}
+\sum_{t=0}^{T-1}
+\left\|
+z_{t+1}-f_\psi(h_t,a_t)
+\right\|_2^2,
+\]
+with \(\lambda_{\mathrm{dyn}}=10\). The learned feasibility model is disabled in this ablation.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Soft DINO-WM dynamics ablation on Push-T. The results show that the soft world-model residual can produce successful behavior, but the task is sensitive to the action regularization weight.}
+\label{tab:soft_dynamics_ablation_appendix}
+\begin{tabular}{lccccp{0.28\textwidth}}
+\toprule
+Run & \(\lambda_{\mathrm{video}}\) & \(\lambda_{\mathrm{goal}}\) & \(\lambda_{\mathrm{action}}\) & Outcome & Notes \\
+\midrule
+D0 & \(0\) & \(0\) & \(0\) & Success 
+& Dynamics-only sanity check with only \(\lambda_{\mathrm{dyn}}=10\) active. \\
+
+D1 & \(0\) & \(10\) & \(0\) & Success 
+& Goal and soft dynamics active; no action penalty. \\
+
+D2 & \(0\) & \(10\) & \(10^{-3}\) & Success 
+& Small action penalty still permits contact-producing actions. \\
+
+D3 & \(0\) & \(10\) & \(10^{-2}\) & Failure 
+& Action penalty begins to suppress useful contact actions. \\
+
+D4 & \(0\) & \(10\) & \(5{\times}10^{-2}\) & Failure 
+& Actions collapse toward small ineffective motions. \\
+
+D5 & \(1\) & \(10\) & \(10^{-3}\) & Success 
+& Adding video loss does not break the successful soft-dynamics configuration. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The dynamics-only run succeeds, confirming that the DINO-WM action interface and soft residual are functional. When the task losses are reintroduced, the planner succeeds for \(\lambda_{\mathrm{action}}\in\{0,10^{-3}\}\), but fails for \(10^{-2}\) and \(5\times10^{-2}\), indicating that Push-T requires relatively weak action regularization to preserve contact-producing actions. Re-enabling the video loss with \(\lambda_{\mathrm{action}}=10^{-3}\) also succeeds.
+
+\section{Evaluations Diagnostics}
+
+\label{app:feasibility_eval}
+We evaluate the learned feasibility model on the Push-T test set using the checkpoint
+\texttt{transformer\_sigma\_delta.pt}. The test set contains \(2440\) samples with macro-actions
+\(a_t\in\mathbb{R}^{10}\), corresponding to five packed 2D primitive actions.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Action conversion check from normalized DINO-WM action space to raw environment scale. 
+This verifies that the saved action normalization produces plausible Push-T action magnitudes.}
+\label{tab:action_conversion_check}
+\begin{tabular}{lc}
+\toprule
+Metric & Value \\
+\midrule
+Normalized action absolute mean & \(0.8978\) \\
+Raw action absolute mean & \(17.9929\) \\
+Normalized action global mean & \(-0.1204\) \\
+Normalized action global std & \(1.1964\) \\
+Raw action global mean & \(-2.5142\) \\
+Raw action global std & \(24.0447\) \\
+Raw action global min & \(-102.9591\) \\
+Raw action global max & \(99.4537\) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h!]
+\centering
+\small
+\caption{DSM latent plausibility evaluation on expert next latents versus small-noise corrupted next latents. 
+The DSM energy reliably assigns lower energy to clean expert latents than to corrupted latents.}
+\label{tab:dsm_latent_plausibility}
+\begin{tabular}{lc}
+\toprule
+Metric & Value \\
+\midrule
+Expert energy mean & \(0.2914\) \\
+Expert energy median & \(0.2936\) \\
+Corrupted energy mean & \(0.3543\) \\
+Corrupted energy median & \(0.3567\) \\
+Mean margin, corrupted minus expert & \(0.0629\) \\
+Fraction expert lower than corrupted & \(1.0000\) \\
+Cosine mean, predicted vs. true noise & \(0.5302\) \\
+Cosine median, predicted vs. true noise & \(0.5375\) \\
+Delta MSE mean & \(0.8569\) \\
+Zero-delta MSE mean & \(0.8053\) \\
+Delta vs. zero ratio & \(1.0641\) \\
+Transition penalty, expert mean & \(0.8569\) \\
+Number of samples & \(2440\) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table*}[h]
+\centering
+\small
+\caption{Action discrimination test with fixed expert next latent and different candidate actions. 
+The transition head shows weak action discrimination on the test set, while the DSM energy is nearly action-invariant.}
+\label{tab:action_discrimination_test}
+\begin{tabular}{lcc}
+\toprule
+Metric & Transition penalty & DSM energy \\
+\midrule
+Expert action mean & \(0.8569\) & \(0.2914\) \\
+Zero action mean & \(0.8530\) & \(0.2912\) \\
+Shuffled action mean & \(0.8761\) & \(0.2912\) \\
+Negative action mean & \(0.8800\) & \(0.2913\) \\
+Gaussian action mean & \(0.8568\) & \(0.2912\) \\
+\midrule
+Margin: zero minus expert & \(-0.0039\) & -- \\
+Margin: shuffled minus expert & \(0.0192\) & -- \\
+Margin: negative minus expert & \(0.0231\) & -- \\
+Margin: Gaussian minus expert & \(-0.0001\) & -- \\
+\midrule
+Fraction expert better than zero & \(0.4270\) & \(0.4889\) \\
+Fraction expert better than shuffled & \(0.6139\) & \(0.4807\) \\
+Fraction expert better than negative & \(0.7115\) & \(0.4869\) \\
+Fraction expert better than Gaussian & \(0.5352\) & \(0.4877\) \\
+\bottomrule
+\end{tabular}
+\end{table*}

@@ -83,11 +83,13 @@ def _candidate_pusht_ids(split_dir: Path, min_frames: int, limit: int) -> list[i
 
 def _candidate_wall_ids(data_root: Path, min_frames: int, limit: int) -> list[int]:
     states = torch.load(data_root / "states.pth", map_location="cpu")
+    first_episode_frames = torch.load(data_root / "obses" / "episode_000.pth", map_location="cpu").shape[0]
+    if first_episode_frames < min_frames:
+        return []
     ids = [
         idx
         for idx in range(int(states.shape[0]))
-        if states.shape[1] >= min_frames
-        and (data_root / "obses" / f"episode_{idx:03d}.pth").exists()
+        if (data_root / "obses" / f"episode_{idx:03d}.pth").exists()
     ]
     return ids[:limit]
 

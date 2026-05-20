@@ -76,17 +76,31 @@ def sample_wall_segment_specs(
     seed: int,
     start_index: int = 0,
 ) -> list[tuple[int, int]]:
-    states = torch.load(data_dir / "states.pth")
+    actions = torch.load(data_dir / "actions.pth")
+    first_frames = torch.load(data_dir / "obses" / "episode_000.pth")
     required_frames = horizon * frame_skip + 1
+    required_actions = horizon * frame_skip
+    max_offset = min(
+        int(first_frames.shape[0]) - required_frames,
+        int(actions.shape[1]) - required_actions,
+    )
+    if max_offset < 0:
+        raise ValueError(
+            f"Wall data is too short for horizon={horizon}, frame_skip={frame_skip}: "
+            f"frames={int(first_frames.shape[0])}, actions={int(actions.shape[1])}, "
+            f"need frames={required_frames}, actions={required_actions}."
+        )
     rng = random.Random(seed)
     sampled = []
+    seen = set()
     total_needed = start_index + num_segments
     while len(sampled) < total_needed:
-        episode_idx = rng.randint(0, int(states.shape[0]) - 1)
-        max_offset = int(states.shape[1]) - required_frames
-        if max_offset < 0:
+        episode_idx = rng.randint(0, int(actions.shape[0]) - 1)
+        spec = (episode_idx, rng.randint(0, max_offset))
+        if spec in seen:
             continue
-        sampled.append((episode_idx, rng.randint(0, max_offset)))
+        seen.add(spec)
+        sampled.append(spec)
     return sampled[start_index:total_needed]
 
 

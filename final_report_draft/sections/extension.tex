@@ -1,0 +1,89 @@
+\section{extension}
+\subsection{Description of the method}
+We investigate whether the ALM-enforced hard dynamics constraint can be replaced by a learned feasibility prior. 
+Recall that the original GVP-WM objective optimizes latent states and actions while enforcing consistency with the world-model dynamics. 
+In our feasibility-only variant, we disable the world-model dynamics residual $\mathcal{L}_{\mathrm{dyn}}$ and instead optimize the latent cost objective with a learned denoising score matching (DSM) penalty.
+
+
+
+Let \(h_t = z_{t-H+1:t}\) denote the latent history at timestep \(t\). We train a denoising model $\epsilon_\phi$ using denoising score matching over a range of noise levels. During training, a noise scale $\sigma$ is sampled from a noise scheduler, Gaussian noise $\epsilon \sim \mathcal{N}(0,I)$ is added to the target next latent, and the model is trained to predict the injected noise from $(\tilde{z}_{t+1}, h_t, a_t, \sigma)$. 
+For the architecure we first went with a simple MLP baseline that flattens the latent history and concatenates it with the action, noisy next latent, and scalar noise level before passing the result through a multilayer SiLU network. The resulting denoising error is used for DSM training.
+
+To preserve the spatial-token structure of the DINO-WM latents, we also use a transformer feasibility model. Each latent is represented as a sequence of patch tokens, and the model attends jointly over history tokens, the noisy next-latent tokens, an action token, and a sinusoidal noise-level embedding. The transformer predicts denoising noise only for the next-latent tokens, yielding a conditional DSM objective in latent space.
+
+Regardless of architecture, at planning time we use the mean squared norm of the predicted noise as a learned feasibility energy. Unlike the augmented Lagrangian formulation, this objective does not enforce
+\(
+z_{t+1} = f_\psi(z_{t-H:t}, a_{t-H:t}).
+\)
+Instead, feasibility is encouraged only through the learned DSM energy. 
+This tests whether a learned latent feasibility model can provide sufficient action-conditioned gradients to ground video plans into executable actions without relying on the pretrained world-model dynamics residual.
+
+Methods are validated similarly to the original GVP-WM paper. Both the Push-T and Wall environments were used to test planning. Video plans were obtained from ORACLE, which contains expert policies that are in-distribution with respect to world-model training.
+
+Initial experiments showed that the main DSM-based method underperformed on Push-T. We therefore evaluated several diagnostic variants to isolate the failure mode. First, we removed ALM and only kept a soft DINO-WM dynamics penalty as a simpler baseline. secondly we trained an additional transition head to predict either the latent displacement \(z_{t+1}-z_t\) or a paired world-model residual \(z_{t+1}-f_\psi(h_t,a_t)\). \hl{still have to run this one} Finally, to remove the possibility that the planner exploits free latent variables, we evaluated an action-only rollout variant in which latent trajectories are generated directly by the pretrained DINO-WM dynamics. To confirm if the denoising model learned to distinguish between expert and corrupted trajectories a separate evaluation method was created. Further explanation can be found in the appendix \ref{Appendix evaluate.py}
+
+
+\hl{explain build\_dataset model maybe in appendix?? describe number of   --batch-size 64 \
+  --lr 1e-4 \
+  --model-dim 256 \
+  --num-layers 4 \
+  --num-heads 4 \
+  --sigma-min 0.05 \
+  --sigma-max 0.5 \
+  --lambda-delta 1.0 \}
+
+
+\subsection{Experiments}
+Note*: this is a draft report and therefore as of yet  extensive ablations on settings are still missing. We hope to have perforemd them for the final draft. However for know this s ection will eb split in what is performend and whats still getting done! 
+
+\subsubsection{Have Done}
+\paragraph{Noise Scheduler} A sigma scheduler was utilized to train the model on multiple noise levels. This scheduler is responsible for sampling noise levels, adding noise to the input, and computing the weighting factors for training and inference. During training, a noise level is independently sampled for each sample in the batch. The noisy input is generated according to \(x' = x + \sigma \epsilon,\), where $x$ is the clean input, $\epsilon \sim \mathcal{N}(0, \bm{I})$ is Gaussian noise, and noise level $\sigma$ controls the corruption strength.
+
+In this work, a log-uniform sigma scheduler was used to represent small and large noise levels sufficiently during training. Sampling in log-space prevents the model form overfocusing on large noise magnitudes while still exposing it to heavily corrupted samples. In a log-uniform scheduler, the sampled noise level is computed as:
+\(
+\sigma = \exp [\log \sigma_{\min} + u(\log \sigma_{\max} - \log \sigma_{min})]
+\quad \text{ with } \quad
+u \sim \mathcal{U}(0, 1)
+\)
+
+In the implementation, we used $\sigma_{\min} = 0.01$, $\sigma_{\max} = 0.5$ to allow the model to learn from mildly to strongly corrupted inputs.
+
+
+\paragraph{Planner Ablations.}
+We performed a series of ablations on Push-T to isolate the contributions of the DINO-WM dynamics term, the learned feasibility model, and the action optimizer. Feasibility-only planning was unreliable and often converged to near-stationary behavior \cite{values from initial jobsripts stilness}. Although the DSM energy could distinguish clean from corrupted latent transitions in diagnositc evaluations \cite{evaluate.py scores}, it did not reliably select task-correct actions during planning. The transition head to predict latent displacement showed action discrimination on the training set, but this separation weakened on the test set, where zero, random, or shuffled actions were often scored similarly to expert actions.\cite{evaluate.py scores},
+\hl{residual head performance}
+
+We next evaluated objectives that retained the pretrained DINO-WM dynamics residual. Both ALM-style dynamics and a soft dynamics penalty produced substantially better behavior. In the soft-dynamics setting, small action penalties worked best: $\lambda_{\mathrm{action}}=0$ and $\lambda_{\mathrm{action}}=10^{-3}$ succeeded, whereas larger penalties such as $10^{-2}$ and $5\times10^{-2}$ led to small-action failures. Adding the learned feasibility term on top of the dynamics objective produced promising results, but feasibility alone was not sufficient.  \hl{show log movement form block}
+
+To test whether feasibility-only planning failed because of a trivial zero-action optimum, we added an anti-stillness penalty with $\lambda_{\mathrm{anti}}=0.1$ and minimum action norm $0.2$. This caused the planner to produce larger actions, but the resulting trajectories still failed: the agent moved away from the block, and the block remained nearly unchanged.
+\hl{site jobfile}
+
+We also evaluated an action-only rollout variant, where the latent trajectory is generated recursively by the pretrained DINO-WM.
+DSM-only rollout also failed from the default initialization. However, evaluations \cite{evaluate.py scores} showed that expert actions received lower cost than zero, shuffled, negative, or random actions, indicating that good solutions exist under the objective. Increasing the number of inner optimization steps to 100 did however not resolve the failure.\hl{site jobfile}
+
+Finally, we evaluated expert-action warm starts. With optimization disabled, the planner exactly reproduced the expert trajectory and solved the task. This confirmed that action scaling, packing, MPC execution, and environment stepping were correct. We then enabled gradient-based optimization while keeping actions smoothly bounded through the tanh reparameterization and a lambda prior penalty that penalized deviation from the warm start sequence. $\lambda_{\mathrm{prior}}=1$ was insufficient and still failed. Stronger expert-action priors succeeded: both $\lambda_{\mathrm{prior}}=10$ and $\lambda_{\mathrm{prior}}=3$ solved the episode, although the optimized actions still deviated slightly from the expert sequence. \hl{site jobfile}
+
+\subsubsection{Will Be Doing}
+Most methods have been performed for the push-t benchmark and in many cases for only a few episodes instead of the full 8.  PUSH-T is the harder objective and fewer episodes run quicker, therefore it was deemed sufficient for this draft version. Next week will focus on rerunning on WALL and PUSH-T with more episodes as well as testing longer horizon settings and increased inner steps. 
+more can be found in the appendix. 
+
+
+\subsection{Discussion and analysis}
+
+Overall, the experiments suggest that DINO-WM dynamics are useful for grounding generated video plans into actions, while the learned DSM feasibility model alone is insufficient. DSM provides a latent plausibility signal, but not a robust action-discriminative or contact-aware control signal. Rollout planning removes free-latent cheating by enforcing dynamics consistency directly, but it introduces a difficult action-only optimization problem. Expert warm-start experiments show that good rollout solutions exist and can be executed correctly, but the optimizer tends to leave this basin unless a strong action prior is imposed. These findings motivate using learned feasibility as an auxiliary regularizer rather than as a replacement for the DINO-WM dynamics constraint, and suggest that future work should improve action-conditioned feasibility learning or use stronger trajectory-level search methods for rollout optimization. 
+
+
+\hl{What is interesting to note is that just DINO-WM dynamics + an auxiliary feasibility penalty scored 100 percent on wall, surpassing ALM. This therefore raises the question why ALM is needed in the first place. } 
+
+\hl{ToDO: Add results from jobscripts}
+%22763645 → only ALM 
+%22764104 → soft dynamics 
+%22764584 → eval on train, looked good
+%22764672 → eval on test, bad, prefered 0 action 
+%22764966 → test on soft constraint looked good 
+%22765169 → optimizer jointly choose latents + actions that satisfy the world model?, good results. this was with everything to 0. also lambda_action to 0 but model could make big actions!
+%22765271 → added everything back, again small actions lambda_action 0.05 
+%22765372 → lambda_action 0.01, better but no succes
+%22765496  → lambda_action 0, works
+%22765631 → lambda_Action 0.001 works!! 
+%22766007 → turn video loss o, still works
