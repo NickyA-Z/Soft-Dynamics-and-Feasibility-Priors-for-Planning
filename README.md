@@ -42,9 +42,12 @@ video generation/evaluation jobs, rescue jobs, and result summarization, use:
 
 - `reimplementation/docs/EXPERIMENT_REPRODUCTION.md`
 
+For the feasibility-model extension, including dataset construction, training, evaluation, and checkpoint paths, see `extension/README.md`.
+
 Large external assets are intentionally not stored in Git. This includes
 datasets, DINO-WM checkpoints, Wan2.1 checkpoints, LoRA checkpoints, generated
 videos, JSON reports, Slurm logs, and report ZIP exports.
+
 
 ## Local Setup
 
