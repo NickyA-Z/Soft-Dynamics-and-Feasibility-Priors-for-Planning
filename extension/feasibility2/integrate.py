@@ -10,8 +10,8 @@ if str(DINO_WM_ROOT) not in sys.path:
     sys.path.append(str(DINO_WM_ROOT))
 from datasets.pusht_dset import ACTION_MEAN, ACTION_STD
 
-from nicky_dl.feasibility2 import model
-from nicky_dl.feasibility2.model import load_feasibility_model_from_checkpoint
+from extension.feasibility2 import model
+from extension.feasibility2.model import load_feasibility_model_from_checkpoint
 
 "File to make feasibility model integrate with solver & planner"
 

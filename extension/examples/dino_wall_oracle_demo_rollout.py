@@ -26,7 +26,7 @@ from reimplementation.src.gvpwm.examples.dino_wall_oracle_utils import (
     resolve_wall_data_dir,
     slice_wall_oracle_episode,
 )
-from nicky_dl.examples.wall_experiment_presets import (
+from extension.examples.wall_experiment_presets import (
     EXPERIMENT_CHOICES,
     EXPERIMENT_DESCRIPTIONS,
     apply_wall_experiment_preset,

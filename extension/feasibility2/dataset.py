@@ -17,7 +17,7 @@ try:
     from ..examples.dino_oracle_utils import load_oracle_episode
 except ImportError:
     try:
-        from nicky_dl.examples.dino_oracle_utils import load_oracle_episode
+        from extension.examples.dino_oracle_utils import load_oracle_episode
     except ImportError:
         load_oracle_episode = None
 
@@ -29,22 +29,15 @@ try:
     )
 except ImportError:
     try:
-        from nicky_dl.examples.dino_wall_oracle_utils import (
+        from extension.examples.dino_wall_oracle_utils import (
             compute_wall_stats,
             load_wall_oracle_episode,
             slice_wall_oracle_episode,
         )
     except ImportError:
-        try:
-            from reimplementation.src.gvpwm.examples.dino_wall_oracle_utils import (
-                compute_wall_stats,
-                load_wall_oracle_episode,
-                slice_wall_oracle_episode,
-            )
-        except ImportError:
-            compute_wall_stats = None
-            load_wall_oracle_episode = None
-            slice_wall_oracle_episode = None
+        compute_wall_stats = None
+        load_wall_oracle_episode = None
+        slice_wall_oracle_episode = None
 
 PRIMITIVE_ACTION_DIM = 2
 ACTION_REPEAT = 5

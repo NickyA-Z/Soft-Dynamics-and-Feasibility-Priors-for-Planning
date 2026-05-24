@@ -14,7 +14,7 @@ if str(DINO_WM_ROOT) not in sys.path:
 from plan import load_model
 
 from nicky_dl.adapters.dino_wm import DinoWorldModelAdapter
-from nicky_dl.feasibility2.dataset import build_feasibility_tensors_from_oracle
+from extension.feasibility2.dataset import build_feasibility_tensors_from_oracle
 from reimplementation.src.gvpwm.examples.dino_wall_oracle_utils import compute_wall_stats
 
 PRIMITIVE_ACTION_DIM = 2

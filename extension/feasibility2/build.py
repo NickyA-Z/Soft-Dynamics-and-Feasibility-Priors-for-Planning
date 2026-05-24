@@ -21,7 +21,7 @@ from plan import load_model
 from datasets.pusht_dset import ACTION_MEAN, ACTION_STD
 from nicky_dl.adapters.dino_wm import DinoWorldModelAdapter
 
-from nicky_dl.feasibility2.dataset import build_feasibility_tensors_from_oracle
+from extension.feasibility2.dataset import build_feasibility_tensors_from_oracle
 from reimplementation.src.gvpwm.examples.dino_wall_oracle_utils import compute_wall_stats
 """
 # PUSHT Variables
@@ -310,4 +310,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

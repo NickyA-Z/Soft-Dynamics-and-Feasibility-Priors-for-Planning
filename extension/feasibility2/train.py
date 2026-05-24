@@ -16,9 +16,9 @@ try:
     from .model import FeasibilityModel, TransformerFeasibilityModel
     from .scheduler import SigmaScheduler, LogUniformSigmaScheduler
 except ImportError:
-    from nicky_dl.feasibility2.dataset import FeasibilityDataset, load_tensor_dataset
-    from nicky_dl.feasibility2.model import FeasibilityModel, TransformerFeasibilityModel
-    from nicky_dl.feasibility2.scheduler import SigmaScheduler, LogUniformSigmaScheduler
+    from extension.feasibility2.dataset import FeasibilityDataset, load_tensor_dataset
+    from extension.feasibility2.model import FeasibilityModel, TransformerFeasibilityModel
+    from extension.feasibility2.scheduler import SigmaScheduler, LogUniformSigmaScheduler
 
 
 
@@ -387,7 +387,7 @@ def main() -> None:
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     world_model = None
     if args.delta_target_mode == "wm_residual":
-        from nicky_dl.feasibility2.build import load_world_model
+        from extension.feasibility2.build import load_world_model
         model_cfg = Path(metadata["model_cfg"])
         model_ckpt = Path(metadata["model_ckpt"])
         if model_cfg is None or model_ckpt is None:

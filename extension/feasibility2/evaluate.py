@@ -18,8 +18,8 @@ try:
     from .dataset import load_tensor_dataset
     from .model import FeasibilityModel, load_feasibility_model_from_checkpoint
 except ImportError:
-    from nicky_dl.feasibility2.dataset import load_tensor_dataset
-    from nicky_dl.feasibility2.model import FeasibilityModel, load_feasibility_model_from_checkpoint
+    from extension.feasibility2.dataset import load_tensor_dataset
+    from extension.feasibility2.model import FeasibilityModel, load_feasibility_model_from_checkpoint
 
 def print_metrics_section(title: str, metrics: dict[str, float]) -> None:
     print("\n" + "=" * 80)

@@ -12,7 +12,7 @@ and saves:
 
 This is useful as a diagnostic model for world-model prediction drift.
 PYTHONPATH=.:/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm \
-/home/scur0196/.conda/envs/dino_wm/bin/python -u -m nicky_dl.feasibility2.build_residual
+/home/scur0196/.conda/envs/dino_wm/bin/python -u -m extension.feasibility2.build_residual
 """
 
 from __future__ import annotations
@@ -29,8 +29,8 @@ if str(DINO_WM_ROOT) not in sys.path:
 
 from datasets.pusht_dset import ACTION_MEAN, ACTION_STD
 
-from nicky_dl.feasibility2.dataset import build_feasibility_tensors_from_oracle
-from nicky_dl.feasibility2.tests import load_world_model, DATA_DIR
+from extension.feasibility2.dataset import build_feasibility_tensors_from_oracle
+from extension.feasibility2.tests import load_world_model, DATA_DIR
 
 
 def unflatten_latents(flat_latents: torch.Tensor, latent_shape: tuple[int, ...]) -> torch.Tensor:

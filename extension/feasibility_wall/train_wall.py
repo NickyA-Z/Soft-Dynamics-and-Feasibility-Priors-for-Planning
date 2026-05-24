@@ -6,9 +6,9 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, random_split
 
-from nicky_dl.feasibility2.dataset import FeasibilityDataset, load_tensor_dataset
-from nicky_dl.feasibility2.model import FeasibilityModel, TransformerFeasibilityModel
-from nicky_dl.feasibility2.scheduler import LogUniformSigmaScheduler
+from extension.feasibility2.dataset import FeasibilityDataset, load_tensor_dataset
+from extension.feasibility2.model import FeasibilityModel, TransformerFeasibilityModel
+from extension.feasibility2.scheduler import LogUniformSigmaScheduler
 
 
 def _split_batch(batch):
