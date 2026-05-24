@@ -18,34 +18,6 @@ The current project includes:
 - Paired DINO-WM residual experiments
 - Push-T evaluation scripts
 
-## Repository structure EXTENSION
-
-The most relevant code is in:
-
-```text
-nicky_dl/
-├── dino_wm/
-│   ├── build.py
-│   ├── dataset.py
-│   ├── model.py
-│   ├── train.py
-│   └── evaluate.py
-│
-├── feasibility2/
-│   ├── dataset.py
-│   ├── model.py
-│   ├── train.py
-│   ├── evaluate.py
-│   └── planner.py
-│
-└── ...
-```
-
-## Important files
-nicky_dl/feasibility2/train.py       Train DSM / transformer feasibility models
-nicky_dl/feasibility2/evaluate.py    Evaluate feasibility model diagnostics
-nicky_dl/feasibility2/model.py       MLP and transformer feasibility models
-nicky_dl/feasibility2/planner.py     Feasibility-based planning utilities
 
 ## Setup 
 conda activate dino_wm
