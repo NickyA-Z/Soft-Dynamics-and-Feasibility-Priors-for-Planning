@@ -1,27 +1,27 @@
-# DL2---Grounding-Generated-Videos-
-This will be our shared repo for both recreating the code from the original paper and adding our own extensions! 
-There is already the start of a todo list, but feel free to add to it and/or place your name behind a topic you are going to work on. 
+# Grounding Generated Videos Reproduction
 
-ToDo: 
+This repository contains our DL2 reproduction and extension work for
+"Grounding Generated Videos in Feasible Plans via World Models" (GVP-WM,
+arXiv:2602.01960).
 
-- identify and localise all (pre-trained) models used in the paper that we do not need to create ourselves (think of DINO-WM etc.)
-- Create Overleaf for the final paper
-    - template on canvas
-    - start writing the introduction/background information
-- Think of ways in which we want to test our model, use the same as the original paper, or do more tests?
-- Create a diffusion model (residual vs scratch) (Itay, Nicky, ? )
-    - how to sample from the trajectories
-    - How to define the sample space?
-- full GVP-WM Code (hopefully get this from the author) (Yixin, Wenfu, Hongchen) 
-    - ALM code
-    - add other subjections of author code ….
-- Finish the proposal plan
-    - redefine the RQs into 1 RQ
-    - reduce to 2 pages
-    - add code of honour paragraph
-    - add a plan, who does what?
-- Make a presentation (Itay, Yixin, Nicky) 
-  1-2 min - gen ai, world models, and diffusion models. 
-  2 min - what people already tried and where it’s becoming difficult 
-  5-6 min - what are we gonna solve
-- read relevant background information and ask questions if you don’t know something
+## Repository Layout
+
+- `original_paper/`: paper sources and PDF snapshots used for reference.
+- `dino_wm/`: imported DINO-WM code and environment/task wrappers.
+- `reimplementation/`: the maintained GVP-WM reimplementation, tests, Snellius
+  jobs, experiment utilities, and reproduction notes.
+- `final_report_draft/`: LaTeX source for the course report draft.
+
+## Reproduction Entry Points
+
+Start with `reimplementation/README.md` for the package overview and local
+smoke tests.
+
+For the cluster experiments, fixed sampled-50 Table 2 protocol, WAN-0S/WAN-FT
+video generation/evaluation jobs, rescue jobs, and result summarization, use:
+
+- `reimplementation/docs/EXPERIMENT_REPRODUCTION.md`
+
+Large external assets are intentionally not stored in Git. This includes
+datasets, DINO-WM checkpoints, Wan2.1 checkpoints, LoRA checkpoints, generated
+videos, JSON reports, Slurm logs, and report ZIP exports.

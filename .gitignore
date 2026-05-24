@@ -28,6 +28,9 @@ multirun/
 *.out
 *.log
 
+# Generated report archives
+/final_report_draft/*.zip
+
 # Large data and model files (use DVC or external storage)
 dino_wm/data/
 dino_wm/checkpoints/
