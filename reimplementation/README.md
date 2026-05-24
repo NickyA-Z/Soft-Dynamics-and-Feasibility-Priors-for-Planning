@@ -28,6 +28,8 @@ What is implemented here is the paper's planning method itself:
 - `src/gvpwm/adapters/dino_wm.py`: adapter for DINO-WM-style latent world models
 - `src/gvpwm/examples/toy_world.py`: lightweight linear world model and environment
 - `src/gvpwm/examples/toy_demo.py`: runnable end-to-end demo
+- `scripts/`: local utilities plus Snellius experiment launchers
+- `docs/EXPERIMENT_REPRODUCTION.md`: end-to-end experiment reproduction guide
 - `docs/MAINTAINERS.md`: detailed implementation and maintenance notes
 - `tests/`: unit tests for the optimizer and MPC loop
 - `scripts/run_toy_demo.py`: convenience launcher
@@ -50,6 +52,11 @@ Then run:
 conda run -n dl2 python -m pytest
 conda run -n dl2 python scripts/run_toy_demo.py
 ```
+
+For the Table 2 reproduction workflow on Snellius, including required external
+assets, runtime environment variables, fixed sampled-50 specs, Slurm arrays,
+rescue jobs, and summary commands, see
+[`docs/EXPERIMENT_REPRODUCTION.md`](docs/EXPERIMENT_REPRODUCTION.md).
 
 ## Quick Start
 

@@ -7,6 +7,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
+from .losses import goal_mse, scale_invariant_alignment
 from .utils import ensure_history_length
 
 
@@ -102,6 +103,29 @@ class WorldModelAdapter(nn.Module, ABC):
         action_history: torch.Tensor,
     ) -> torch.Tensor:
         raise NotImplementedError
+
+    def initialize_latents_from_video(
+        self,
+        current_latent: torch.Tensor,
+        video_latents: torch.Tensor,
+    ) -> torch.Tensor:
+        latents = video_latents.clone()
+        latents[0] = current_latent
+        return latents
+
+    def video_alignment_loss(
+        self,
+        latent: torch.Tensor,
+        reference: torch.Tensor,
+    ) -> torch.Tensor:
+        return scale_invariant_alignment(latent, reference)
+
+    def goal_loss(
+        self,
+        latent: torch.Tensor,
+        goal_latent: torch.Tensor,
+    ) -> torch.Tensor:
+        return goal_mse(latent, goal_latent)
 
     def rollout(
         self,
