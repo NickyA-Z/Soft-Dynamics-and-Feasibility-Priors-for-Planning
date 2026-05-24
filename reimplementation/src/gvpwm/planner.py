@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 from typing import Any, Callable
-
 import torch
 
 from .config import PlannerConfig
 from .feasibility_model.model import FeasibilityModel
 from .interfaces import MPCResult, MPCStepResult, VideoPlan, VideoPlanSource, WorldModelAdapter
-from .losses import goal_mse
 from .solver import LatentCollocationSolver
 from .utils import ensure_history_length, shift_action_warm_start, shift_latent_warm_start
 from .video import temporal_resample_sequence
@@ -28,8 +26,7 @@ class GVPWMPlanner:
         self.feasibility_model = feasibility_model
         self.solver = LatentCollocationSolver(
             world_model=world_model,
-            config=config.solver,
-            config_alm=config.alm,
+            config=config.alm,
             config_feasibility=config.feasibility,
             feasibility_model=feasibility_model,
         )
@@ -46,6 +43,7 @@ class GVPWMPlanner:
         latent_context: torch.Tensor,
         past_action_context: torch.Tensor,
         goal_latent: torch.Tensor,
+        video_latents: torch.Tensor,
         actions: torch.Tensor,
     ) -> torch.Tensor:
         if not self.config.refinement.enabled or self.config.refinement.num_samples <= 0:
@@ -53,7 +51,7 @@ class GVPWMPlanner:
         device = actions.device
         candidates = [actions]
         for _ in range(self.config.refinement.num_samples):
-            noisy = actions + torch.randn_like(actions) * self.config.refinement.noise_std
+            noisy = actions + torch.randn_like(actions) * (self.config.refinement.noise_variance ** 0.5)
             noisy = noisy.clamp(
                 min=self.world_model.action_low,
                 max=self.world_model.action_high,
@@ -68,9 +66,25 @@ class GVPWMPlanner:
                 past_action_context=past_action_context,
                 planned_actions=candidate,
             )
-            terminal_cost = goal_mse(rollout[-1], goal_latent)
-            if best_cost is None or terminal_cost < best_cost:
-                best_cost = terminal_cost
+            cost = self.world_model.goal_loss(rollout[-1], goal_latent)
+            if self.config.refinement.objective == "planner":
+                video_cost = cost.new_tensor(0.0)
+                if self.config.alm.use_video_loss and rollout.shape[0] > 2:
+                    for index in range(1, rollout.shape[0] - 1):
+                        video_cost = video_cost + self.world_model.video_alignment_loss(
+                            rollout[index],
+                            video_latents[index],
+                        )
+                action_cost = candidate.pow(2).sum()
+                cost = (
+                    self.config.alm.lambda_video * video_cost
+                    + self.config.alm.lambda_goal * cost
+                    + self.config.alm.lambda_action * action_cost
+                )
+            elif self.config.refinement.objective != "goal":
+                raise ValueError(f"Unknown refinement objective: {self.config.refinement.objective}")
+            if best_cost is None or cost < best_cost:
+                best_cost = cost
                 best_actions = candidate
         return best_actions.to(device)
 
@@ -84,20 +98,30 @@ class GVPWMPlanner:
         warm_start_actions: torch.Tensor | None = None,
     ):
         latent_context = self.world_model.encode_sequence(observation_history).to(self.world_model.device)
-        latent_context = ensure_history_length(
-            latent_context,
-            self.world_model.history_length,
-            pad_mode="repeat_first",
-        )
+        if self.config.alm.pad_initial_history:
+            latent_context = ensure_history_length(
+                latent_context,
+                self.world_model.history_length,
+                pad_mode="repeat_first",
+            )
         goal_latent = self.world_model.encode_observation(goal_observation).to(self.world_model.device)
         if past_action_history is None:
+            initial_action_history = max(self.world_model.history_length - 1, 0)
+            if not self.config.alm.pad_initial_history:
+                initial_action_history = 0
             past_action_history = torch.zeros(
-                max(self.world_model.history_length - 1, 0),
+                initial_action_history,
                 self.world_model.action_dim,
                 device=self.world_model.device,
             )
         else:
+            max_action_history = max(self.world_model.history_length - 1, 0)
             past_action_history = past_action_history.to(self.world_model.device)
+            past_action_history = (
+                past_action_history[-max_action_history:]
+                if max_action_history > 0
+                else past_action_history[:0]
+            )
         encoded_video = self._encode_video(video_plan, self.config.mpc.horizon)
         return self.solver.solve(
             latent_context=latent_context,
@@ -116,6 +140,8 @@ class GVPWMPlanner:
         video_source: VideoPlanSource | None = None,
         video_plan: VideoPlan | None = None,
         past_action_history: torch.Tensor | None = None,
+        initial_warm_start_latents: torch.Tensor | None = None,
+        initial_warm_start_actions: torch.Tensor | None = None,
     ) -> MPCResult:
         if video_plan is None:
             if video_source is None:
@@ -128,25 +154,43 @@ class GVPWMPlanner:
             )
 
         latent_context = self.world_model.encode_sequence(observation_history).to(self.world_model.device)
-        latent_context = ensure_history_length(
-            latent_context,
-            self.world_model.history_length,
-            pad_mode="repeat_first",
-        )
+        if self.config.alm.pad_initial_history:
+            latent_context = ensure_history_length(
+                latent_context,
+                self.world_model.history_length,
+                pad_mode="repeat_first",
+            )
         goal_latent = self.world_model.encode_observation(goal_observation).to(self.world_model.device)
         encoded_video = self._encode_video(video_plan, self.config.mpc.horizon)
 
         if past_action_history is None:
+            initial_action_history = max(self.world_model.history_length - 1, 0)
+            if not self.config.alm.pad_initial_history:
+                initial_action_history = 0
             past_action_history = torch.zeros(
-                max(self.world_model.history_length - 1, 0),
+                initial_action_history,
                 self.world_model.action_dim,
                 device=self.world_model.device,
             )
         else:
+            max_action_history = max(self.world_model.history_length - 1, 0)
             past_action_history = past_action_history.to(self.world_model.device)
+            past_action_history = (
+                past_action_history[-max_action_history:]
+                if max_action_history > 0
+                else past_action_history[:0]
+            )
 
-        warm_start_latents = None
-        warm_start_actions = None
+        warm_start_latents = (
+            initial_warm_start_latents.to(self.world_model.device)
+            if initial_warm_start_latents is not None
+            else None
+        )
+        warm_start_actions = (
+            initial_warm_start_actions.to(self.world_model.device)
+            if initial_warm_start_actions is not None
+            else None
+        )
         executed_actions = []
         executed_latents = [latent_context[-1]]
         steps: list[MPCStepResult] = []
@@ -170,8 +214,10 @@ class GVPWMPlanner:
                 latent_context=latent_context,
                 past_action_context=past_action_history,
                 goal_latent=goal_latent,
+                video_latents=current_video,
                 actions=result.actions,
             )
+
             n_exec = min(self.config.mpc.execution_stride, remaining)
             executed_this_round = planned_actions[:n_exec]
 
