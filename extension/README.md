@@ -27,21 +27,21 @@ Build the training set from episodes 0--499:
 
 ```bash
 echo "Building train set (episodes 0-499)..."
-PYTHONPATH=$PYTHONPATH $PYTHON -u -m nicky_dl.feasibility2.build \
+PYTHONPATH=$PYTHONPATH $PYTHON -u -m extension.feasibility2.build \
   --episode-start 0 \
   --episode-end 500 \
-  --out $DATAPATH/past_hist_transformer_train_500.pt
+  --out $DATAPATH/
 ```
 
 Build the test set from episodes 500--599, using the training-set normalization statistics:
 
 ```bash
 echo "Building test set (episodes 500-599) using train stats..."
-PYTHONPATH=$PYTHONPATH $PYTHON -u -m nicky_dl.feasibility2.build \
+PYTHONPATH=$PYTHONPATH $PYTHON -u -m extension.feasibility2.build \
   --episode-start 500 \
   --episode-end 600 \
-  --out $DATAPATH/past_hist_transformer_test_100.pt \
-  --norm-stats $DATAPATH/past_hist_transformer_train_500.pt
+  --out $DATAPATH/ \
+  --norm-stats $DATAPATH/
 ```
 
 The important point is that the test set should reuse the train-set normalization statistics. This avoids leaking test statistics into training or evaluation.
@@ -118,7 +118,7 @@ The learned DSM feasibility model is trained separately and loaded only when fea
 Example:
 
 ```bash
-checkpoints/transformer_sigma_delta.pt
+checkpoints/YOUR_CHECKPOINT
 ```
 
 When running without feasibility, use:
@@ -134,7 +134,7 @@ When running without feasibility, use:
 Planner experiments are launched with:
 
 ```bash
-python -u -m nicky_dl.examples.dino_oracle_demo_copy
+python -u -m extension.examples.dino_oracle_demo_copy
 ```
 
 Important arguments:
@@ -155,7 +155,7 @@ Important arguments:
 This is the original hard-constrained latent-collocation planner. It optimizes both latents and actions while enforcing DINO-WM dynamics with an Augmented Lagrangian constraint.
 
 ```bash
-python -u -m nicky_dl.examples.dino_oracle_demo_copy \
+python -u -m extension.examples.dino_oracle_demo_copy \
   --num-episodes 100 \
   --raw-horizon 50 \
   --dynamics-mode alm \
@@ -173,7 +173,7 @@ python -u -m nicky_dl.examples.dino_oracle_demo_copy \
 This replaces the ALM constraint update with a fixed-weight DINO-WM dynamics penalty.
 
 ```bash
-python -u -m nicky_dl.examples.dino_oracle_demo_copy \
+python -u -m extension.examples.dino_oracle_demo_copy \
   --num-episodes 100 \
   --raw-horizon 50 \
   --dynamics-mode soft \
@@ -191,7 +191,7 @@ python -u -m nicky_dl.examples.dino_oracle_demo_copy \
 In rollout mode, the planner optimizes only the action sequence. The latent trajectory is generated recursively by DINO-WM, so dynamics consistency is enforced by construction.
 
 ```bash
-python -u -m nicky_dl.examples.dino_oracle_demo_copy \
+python -u -m extension.examples.dino_oracle_demo_copy \
   --num-episodes 100 \
   --raw-horizon 50 \
   --dynamics-mode rollout \
@@ -209,7 +209,7 @@ python -u -m nicky_dl.examples.dino_oracle_demo_copy \
 This enables the learned DSM feasibility prior without using the ALM dynamics constraint.
 
 ```bash
-python -u -m nicky_dl.examples.dino_oracle_demo_copy \
+python -u -m extension.examples.dino_oracle_demo_copy \
   --num-episodes 100 \
   --raw-horizon 50 \
   --dynamics-mode none \
