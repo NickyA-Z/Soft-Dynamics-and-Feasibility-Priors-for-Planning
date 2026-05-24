@@ -1,6 +1,98 @@
 # Experiment Reproduction
 
 This document explains how to reproduce the planner experiments. All variants use the same environment, datasets, Push-T evaluation setup, and pretrained DINO-WM checkpoint. Only the planning objective changes.
+This README describes the feasibility-model workflow:
+
+1. build train and test datasets,
+2. train the feasibility model,
+3. evaluate the trained checkpoint,
+4. use the checkpoint path in planner runs.
+
+Use the same environment as the reproduction experiments:
+```bash
+cd reimplementation
+conda env create -n dl2 -f environment.yml
+conda run -n dl2 python -m pytest
+```
+
+# Feasibility Dataset, Training, and Evaluation
+The same Python environment and project path should be used for all steps.
+
+
+Using scratch for `DATAPATH` is recommended because the generated datasets and checkpoints can be large.
+
+## Build Datasets
+
+Build the training set from episodes 0--499:
+
+```bash
+echo "Building train set (episodes 0-499)..."
+PYTHONPATH=$PYTHONPATH $PYTHON -u -m nicky_dl.feasibility2.build \
+  --episode-start 0 \
+  --episode-end 500 \
+  --out $DATAPATH/past_hist_transformer_train_500.pt
+```
+
+Build the test set from episodes 500--599, using the training-set normalization statistics:
+
+```bash
+echo "Building test set (episodes 500-599) using train stats..."
+PYTHONPATH=$PYTHONPATH $PYTHON -u -m nicky_dl.feasibility2.build \
+  --episode-start 500 \
+  --episode-end 600 \
+  --out $DATAPATH/past_hist_transformer_test_100.pt \
+  --norm-stats $DATAPATH/past_hist_transformer_train_500.pt
+```
+
+The important point is that the test set should reuse the train-set normalization statistics. This avoids leaking test statistics into training or evaluation.
+
+## Train Feasibility Model
+
+Train the transformer feasibility model:
+
+```bash
+echo "===== Training: $RUN_NAME ====="
+PYTHONPATH=$PYTHONPATH $PYTHON -u -m extension.feasibility2.train \
+  --dataset $DATAPATH/ \
+  --checkpoint-out $CKPT \
+  --architecture transformer \
+  --epochs $EPOCHS \
+  --batch-size 64 \
+  --lr 1e-4 \
+  --model-dim 256 \
+  --num-layers 4 \
+  --num-heads 4 \
+  --sigma-min 0.05 \
+  --sigma-max 0.5 \
+  --lambda-delta 1.0
+```
+
+Make sure the dataset name used here matches the file produced by the build step. 
+
+## Evaluate Feasibility Model
+
+Evaluate the trained checkpoint:
+
+```bash
+echo "===== Evaluating: $RUN_NAME ====="
+PYTHONPATH=$PYTHONPATH $PYTHON -u -m extension.feasibility2.evaluate \
+  --dataset $DATAPATH/ \
+  --checkpoint $CKPT \
+  --noise-level 0.2 \
+  --random-mode small_noise
+```
+
+For a held-out evaluation, use the test dataset instead:
+
+```bash
+PYTHONPATH=$PYTHONPATH $PYTHON -u -m extension.feasibility2.evaluate \
+  --dataset $DATAPATH/feas_transformer_test_100.pt \
+  --checkpoint $CKPT \
+  --noise-level 0.2 \
+  --random-mode small_noise
+```
+
+#Planning
 
 ## Required Checkpoints
 
@@ -36,15 +128,6 @@ When running without feasibility, use:
 --feasibility-checkpoint None
 ```
 
-## Environment
-
-Use the same environment as the reproduction experiments:
-```bash
-cd reimplementation
-conda env create -n dl2 -f environment.yml
-conda run -n dl2 python -m pytest
-```
-All planner modes use this same environment.
 
 ## Main Entry Point
 
