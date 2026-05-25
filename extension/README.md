@@ -230,8 +230,6 @@ Supported raw horizons are:
 25 50 80
 ```
 
-
-
 ## Notes
 
 - All modes use the same Push-T environment and DINO-WM checkpoint.
@@ -242,3 +240,168 @@ Supported raw horizons are:
 - `--raw-horizon` is the environment horizon before conversion to macro-actions. In Push-T, one macro-action contains five consecutive 2D primitive actions.
 - If disk quota is limited, write logs, checkpoints, and generated datasets to scratch instead of the home directory.
 - Avoid duplicate logging by either using `#SBATCH --output/--error` or manual `> file.out 2> file.err` redirection, not both for the same stream.
+
+## Wall Experiments
+
+Wall runs use the `extension.feasibility_wall` builders/trainers and the
+`extension.examples.dino_wall_experiment` planner entry point. Set the common
+paths once and reuse them through the whole workflow:
+
+```bash
+export PROJECT_ROOT=/path/to/DL2---Grounding-Generated-Videos-
+export DINO_WM_ROOT=$PROJECT_ROOT/dino_wm
+export DATAPATH=/path/to/scratch_or_outputs
+export PYTHON=/path/to/conda/env/bin/python
+export PYTHONPATH=$PROJECT_ROOT:$DINO_WM_ROOT:${PYTHONPATH:-}
+
+export WALL_DATA_ROOT=$DINO_WM_ROOT/data/wall_single
+export WALL_TRAIN_ROOT=$WALL_DATA_ROOT/train
+export WALL_VAL_ROOT=$WALL_DATA_ROOT/val
+export WALL_TRAIN_DATA=$DATAPATH/wall_feas_train.pt
+export WALL_VAL_DATA=$DATAPATH/wall_feas_val.pt
+export WALL_FEAS_CKPT=$PROJECT_ROOT/checkpoints/wall_feasibility_hist1.pt
+export WALL_MODEL_NAME=wall_single
+```
+
+### 1. Build Wall Feasibility Tensors
+
+Build the Wall training tensors:
+
+```bash
+PYTHONPATH=$PYTHONPATH $PYTHON -u -m extension.feasibility_wall.build_wall \
+  --data-root $WALL_TRAIN_ROOT \
+  --episode-start 0 \
+  --episode-end 960 \
+  --out $WALL_TRAIN_DATA
+```
+
+Build the Wall validation tensors, reusing the normalization statistics from
+the training tensors:
+
+```bash
+PYTHONPATH=$PYTHONPATH $PYTHON -u -m extension.feasibility_wall.build_wall \
+  --data-root $WALL_VAL_ROOT \
+  --episode-start 0 \
+  --episode-end 960 \
+  --out $WALL_VAL_DATA \
+  --norm-stats $WALL_TRAIN_DATA
+```
+
+The builder loads the Wall DINO-WM model, reads Wall episodes from
+`--data-root`, and writes one `.pt` tensor dataset to `--out`.
+
+### 2. Train the Wall Feasibility Model
+
+```bash
+PYTHONPATH=$PYTHONPATH $PYTHON -u -m extension.feasibility_wall.train_wall \
+  --dataset $WALL_TRAIN_DATA \
+  --val-dataset $WALL_VAL_DATA \
+  --checkpoint-out $WALL_FEAS_CKPT \
+  --architecture transformer \
+  --epochs 50 \
+  --batch-size 64 \
+  --lr 1e-4 \
+  --model-dim 256 \
+  --num-layers 4 \
+  --num-heads 4 \
+  --sigma-min 0.05 \
+  --sigma-max 0.5 \
+  --lambda-delta 1.0
+```
+
+`$WALL_FEAS_CKPT` is the checkpoint path passed to planner runs that enable DSM
+feasibility.
+
+### 3. Run One Wall Planner Preset
+
+The planner entry point is:
+
+```bash
+PYTHONPATH=$PYTHONPATH $PYTHON -u -m extension.examples.dino_wall_experiment
+```
+
+A typical Wall run is:
+
+```bash
+PYTHONPATH=$PYTHONPATH $PYTHON -u -m extension.examples.dino_wall_experiment \
+  --experiment soft_dsm_aux \
+  --data-root $WALL_DATA_ROOT \
+  --split val \
+  --raw-horizon 50 \
+  --frame-skip 5 \
+  --start-index 0 \
+  --num-episodes 50 \
+  --wall-target-source env-replay \
+  --model-name $WALL_MODEL_NAME \
+  --feasibility-checkpoint $WALL_FEAS_CKPT
+```
+
+`--raw-horizon` is the paper/environment horizon. It must be divisible by
+`--frame-skip`; the script converts it to the world-model macro horizon with
+`macro_horizon = raw_horizon / frame_skip`.
+
+### 4. Available Wall Presets
+
+The presets are defined in `extension/examples/wall_experiment_presets.py`:
+
+```text
+soft_baseline
+soft_dsm_aux
+rollout_baseline_no_refine
+rollout_dsm
+free_latent_dsm
+```
+
+Preset meanings:
+
+- `soft_baseline`: soft DINO-WM dynamics penalty without DSM feasibility.
+- `soft_dsm_aux`: soft DINO-WM dynamics penalty with DSM auxiliary feasibility.
+- `rollout_baseline_no_refine`: rollout baseline with random action refinement disabled.
+- `rollout_dsm`: action-only rollout with DSM feasibility.
+- `free_latent_dsm`: free-latent feasibility-only planner with no DINO-WM dynamics.
+
+To run a different setting, change only `--experiment`. Baseline presets still
+accept `--feasibility-checkpoint`; the preset disables feasibility internally.
+
+### 5. Run All Standard Wall Presets
+
+Use a shell loop when running locally or inside one Slurm job:
+
+```bash
+for EXPERIMENT in \
+  soft_baseline \
+  soft_dsm_aux \
+  rollout_baseline_no_refine \
+  rollout_dsm \
+  free_latent_dsm
+do
+  PYTHONPATH=$PYTHONPATH $PYTHON -u -m extension.examples.dino_wall_experiment \
+    --experiment $EXPERIMENT \
+    --data-root $WALL_DATA_ROOT \
+    --split val \
+    --raw-horizon 50 \
+    --frame-skip 5 \
+    --start-index 0 \
+    --num-episodes 50 \
+    --wall-target-source env-replay \
+    --model-name $WALL_MODEL_NAME \
+    --feasibility-checkpoint $WALL_FEAS_CKPT
+done
+```
+
+For Slurm, put the same commands inside a job script after loading the conda
+environment and exporting the same variables.
+
+### 6. Useful Wall Arguments
+
+- `--data-root`: root containing Wall data; with `--split val`, the script uses
+  `$WALL_DATA_ROOT/val` when that split directory exists.
+- `--split`: use `train`, `val`, or `all` depending on how the Wall tensors are organized.
+- `--start-index` and `--num-episodes`: select a contiguous slice of eligible episodes.
+- `--episode-ids`: run explicit comma-separated episode ids.
+- `--episode-specs`: run explicit `episode:start_offset` pairs.
+- `--sample-targets`: sample target segments instead of taking the eligible slice.
+- `--wall-target-source`: use `env-replay` or `dataset` targets.
+- `--action-warm-start expert`: diagnostic mode that initializes the first MPC solve from expert actions.
+- `--disable-refinement`: disables random action refinement for diagnostics.
+- `--inner-steps`: overrides planner inner gradient steps for diagnostics.
