@@ -227,6 +227,24 @@ class LatentCollocationSolver:
                 noise_level=noise_level,
                 reduction="mean",
             )
+
+            # Contrastive penalty (NEW, optional)
+            if self.config_feasibility.lambda_contrastive_plan > 0:
+                total_penalty = candidate_latents.new_tensor(0.0)
+                anchor_emb = self.feasibility_model.get_embedding(
+                    history=history_window.reshape(self.world_model.history_length, -1),
+                    action=candidate_actions[index],
+                    z_noisy=candidate_latents[index + 1].reshape(-1),
+                    noise_level=noise_level,
+                )
+                # Distance to "typical infeasible region" (e.g., mean of training negatives)
+                # This is a placeholder; you'd cache reference embeddings during init
+                ref_embedding = getattr(self.feasibility_model, 'mean_infeasible_embedding', anchor_emb)
+                contrastive_penalty = torch.nn.functional.cosine_similarity(
+                    anchor_emb.unsqueeze(0), ref_embedding.unsqueeze(0)
+                )
+                total_penalty = total_penalty + self.config_feasibility.lambda_contrastive_plan * contrastive_penalty
+        
         return total_penalty
 
     def solve(

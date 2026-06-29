@@ -58,6 +58,11 @@ class FeasibilityConfig:
     use_layer_norm: bool = False
     noise_level: float = 0.1
 
+    # NEW: Contrastive learning
+    lambda_contrastive_train: float = 0.0  # 0 = disabled, >0 = weight in training
+    lambda_contrastive_plan: float = 0.0   # 0 = disabled, >0 = weight at planning time
+    contrastive_dim: int = 128
+
 
 @dataclass
 class RefinementConfig:
