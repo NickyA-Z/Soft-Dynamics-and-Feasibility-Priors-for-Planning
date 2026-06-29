@@ -616,6 +616,7 @@ class FeasibilityModel(nn.Module):
         layers.append(nn.Linear(dim, self.latent_dim))
         self.net = nn.Sequential(*layers)
 
+
     def _batchify(
         self,
         history: torch.Tensor,

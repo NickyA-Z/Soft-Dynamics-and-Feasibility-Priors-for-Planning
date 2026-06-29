@@ -10,6 +10,7 @@ from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader, random_split
+import torch.nn.functional as F
 
 try:
     from .dataset import FeasibilityDataset, load_tensor_dataset
@@ -20,6 +21,58 @@ except ImportError:
     from extension.feasibility2.model import FeasibilityModel, TransformerFeasibilityModel
     from extension.feasibility2.scheduler import SigmaScheduler, LogUniformSigmaScheduler
 
+def contrastive_energy_ranking_loss(
+    model,
+    history: torch.Tensor,
+    action: torch.Tensor,
+    z_next: torch.Tensor,
+    noise_level: float | torch.Tensor,
+    margin: float = 0.1,
+    neg_mode: str = "shuffle",
+    ) -> torch.Tensor:
+    """
+    Energy ranking loss:
+    max(0, margin + E_pos - E_neg)
+    where E(*) is model.penalty(..., reduction="none").
+    """
+    batch_size = history.shape[0]
+    if batch_size < 2:
+        return history.new_tensor(0.0)
+
+    if neg_mode == "shuffle":
+        perm = torch.randperm(batch_size, device=history.device)
+        neg_action = action[perm]
+        neg_z_next = z_next[perm]
+    elif neg_mode == "wrong_action":
+        perm = torch.randperm(batch_size, device=history.device)
+        neg_action = action[perm]
+        neg_z_next = z_next
+    elif neg_mode == "small_noise":
+        neg_action = action
+        # Harder negatives close to data manifold.
+        neg_z_next = z_next + 0.2 * torch.randn_like(z_next)
+    elif neg_mode == "gaussian":
+        neg_action = action
+        neg_z_next = torch.randn_like(z_next)
+    else:
+        raise ValueError(f"Unknown neg_mode: {neg_mode}")
+
+    e_pos = model.penalty(
+        history,
+        action,
+        z_next,
+        noise_level=noise_level,
+        reduction="none",
+    )
+    e_neg = model.penalty(
+        history,
+        neg_action,
+        neg_z_next,
+        noise_level=noise_level,
+        reduction="none",
+    )
+
+    return F.relu(margin + e_pos - e_neg).mean()
 
 
 def train_feasibility_model(
@@ -43,6 +96,11 @@ def train_feasibility_model(
     delta_target_mode: str = "current_delta",
     lambda_delta: float = 1.0,
     world_model: torch.nn.Module | None = None,
+
+    lambda_contrastive: float = 0.0,
+    contrastive_margin: float = 0.1,
+    contrastive_neg_mode: str = "shuffle",
+
 ) -> FeasibilityModel:
     device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
 
@@ -180,12 +238,47 @@ def train_feasibility_model(
             z_next = z_next.to(device)
             #loss = model.dsm_loss(history, action, z_next, scheduler=scheduler, reduction="mean")  # mean over batch
 
+            """
             # old loss 
             dsm_loss = model.dsm_loss(history,action,z_next,scheduler=scheduler,reduction="mean")
             # new delta-based loss
-            
             delta_loss = model.delta_loss(history,action,z_next,reduction="mean", target=delta_target_mode, world_model=world_model, latent_mean=latent_mean, latent_std=latent_std, past_action_history=past_action_history)
             loss = dsm_loss + lambda_delta * delta_loss
+            """
+            dsm_loss = model.dsm_loss(
+                history,
+                action,
+                z_next,
+                scheduler=scheduler,
+                reduction="mean",
+            )
+            delta_loss = model.delta_loss(
+                history,
+                action,
+                z_next,
+                reduction="mean",
+                target=delta_target_mode,
+                world_model=world_model,
+                latent_mean=latent_mean,
+                latent_std=latent_std,
+                past_action_history=past_action_history,
+            )
+
+            contrastive_loss = history.new_tensor(0.0)
+            if lambda_contrastive > 0.0:
+                contrastive_loss = contrastive_energy_ranking_loss(
+                    model=model,
+                    history=history,
+                    action=action,
+                    z_next=z_next,
+                    noise_level=noise_level,
+                    margin=contrastive_margin,
+                    neg_mode=contrastive_neg_mode,
+                )
+            
+            # full loss term with weights
+            loss = dsm_loss + lambda_delta * delta_loss + lambda_contrastive * contrastive_loss
+            
             
             if not torch.isfinite(loss):
                 raise RuntimeError(f"Non-finite training loss at epoch {epoch}: {loss.item()}")
@@ -218,12 +311,48 @@ def train_feasibility_model(
                     history = history.to(device)
                     action = action.to(device)
                     z_next = z_next.to(device)
+
+                    """
                     #loss = model.dsm_loss(history, action, z_next, scheduler=scheduler, reduction="mean")
                     # old loss 
                     dsm_loss = model.dsm_loss(history,action,z_next,noise_level=noise_level,reduction="mean")
                     # new delta-based loss
                     delta_loss = model.delta_loss(history,action,z_next,reduction="mean", target=delta_target_mode, world_model=world_model, latent_mean=latent_mean, latent_std=latent_std, past_action_history=past_action_history)
                     loss = dsm_loss + lambda_delta * delta_loss
+                    """
+
+                    dsm_loss = model.dsm_loss(
+                        history,
+                        action,
+                        z_next,
+                        noise_level=noise_level,
+                        reduction="mean",
+                    )
+                    delta_loss = model.delta_loss(
+                        history,
+                        action,
+                        z_next,
+                        reduction="mean",
+                        target=delta_target_mode,
+                        world_model=world_model,
+                        latent_mean=latent_mean,
+                        latent_std=latent_std,
+                        past_action_history=past_action_history,
+                    )
+
+                    contrastive_loss = history.new_tensor(0.0)
+                    if lambda_contrastive > 0.0:
+                        contrastive_loss = contrastive_energy_ranking_loss(
+                            model=model,
+                            history=history,
+                            action=action,
+                            z_next=z_next,
+                            noise_level=noise_level,
+                            margin=contrastive_margin,
+                            neg_mode=contrastive_neg_mode,
+                        )
+                    loss = dsm_loss + lambda_delta * delta_loss + lambda_contrastive * contrastive_loss
+
 
                     if not torch.isfinite(loss):
                         raise RuntimeError(f"Non-finite validation loss at epoch {epoch}: {loss.item()}")
@@ -294,6 +423,9 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument("--lambda-delta", type=float, default=1.0)
     p.add_argument("--delta-target-mode", choices=("current_delta", "wm_residual"), default="current_delta")
+    p.add_argument("--lambda-contrastive", type=float, default=0.0)
+    p.add_argument("--contrastive-margin", type=float, default=0.1)
+    p.add_argument("--contrastive-neg-mode", choices=("shuffle", "wrong_action", "small_noise", "gaussian"), default="shuffle")
 
     return p.parse_args()
 
@@ -429,6 +561,9 @@ def main() -> None:
         delta_target_mode=args.delta_target_mode,
         lambda_delta=args.lambda_delta,
         world_model=world_model,
+        lambda_contrastive=args.lambda_contrastive,
+        contrastive_margin=args.contrastive_margin,
+        contrastive_neg_mode=args.contrastive_neg_mode,
     )
 
 

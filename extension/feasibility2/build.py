@@ -13,7 +13,7 @@ from typing import Optional
 import torch
 from omegaconf import OmegaConf
 
-DINO_WM_ROOT = Path("/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm")
+DINO_WM_ROOT = Path(__file__).resolve().parents[2] / "dino_wm"
 if str(DINO_WM_ROOT) not in sys.path:
     sys.path.append(str(DINO_WM_ROOT))
 
@@ -22,7 +22,7 @@ from datasets.pusht_dset import ACTION_MEAN, ACTION_STD
 from nicky_dl.adapters.dino_wm import DinoWorldModelAdapter
 
 from extension.feasibility2.dataset import build_feasibility_tensors_from_oracle
-from reimplementation.src.gvpwm.examples.dino_wall_oracle_utils import compute_wall_stats
+from trash.dino_wall_oracle_utils import compute_wall_stats
 """
 # PUSHT Variables
 DATA_DIR = DINO_WM_ROOT / "data" / "pusht_noise" / "train"
@@ -51,7 +51,7 @@ def resolve_domain_paths(domain: str, split: str = "train"):
         model_name = "wall_single"
         # Wall may not have train/val folders; adjust if your data layout differs.
         data_dir = DINO_WM_ROOT / "data" / "wall_single" 
-        split_dir = root / split 
+        split_dir = DINO_WM_ROOT / "data" / "wall_single" / split
         data_dir = split_dir if split_dir.exists() else data_dir
 
     else:
