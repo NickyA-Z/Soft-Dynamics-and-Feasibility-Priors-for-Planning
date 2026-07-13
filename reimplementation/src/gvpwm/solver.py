@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 
 from .config import ALMConfig, FeasibilityConfig
-from .feasibility_model.model import FeasibilityModel
+from extension.feasibility2.model import FeasibilityModel
 from .interfaces import CollocationResult, WorldModelAdapter
 from .losses import squared_norm
 from .utils import ensure_history_length

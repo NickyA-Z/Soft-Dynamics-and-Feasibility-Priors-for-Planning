@@ -19,7 +19,7 @@ if str(DINO_WM_ROOT) not in sys.path:
 
 from plan import load_model
 from datasets.pusht_dset import ACTION_MEAN, ACTION_STD
-from nicky_dl.adapters.dino_wm import DinoWorldModelAdapter
+from extension.adapters.dino_wm import DinoWorldModelAdapter
 
 from extension.feasibility2.dataset import build_feasibility_tensors_from_oracle
 from trash.dino_wall_oracle_utils import compute_wall_stats
@@ -57,7 +57,13 @@ def resolve_domain_paths(domain: str, split: str = "train"):
     else:
         raise ValueError(f"Unsupported domain: {domain}")
 
-    model_dir = DINO_WM_ROOT / "checkpoints" / "outputs" / model_name
+    # Prefer the newer outputs layout, but keep backward compatibility.
+    candidate_model_dirs = [
+        DINO_WM_ROOT / "outputs" / model_name,
+        DINO_WM_ROOT / "checkpoints" / "outputs" / model_name,
+    ]
+
+    model_dir = next((p for p in candidate_model_dirs if p.exists()), candidate_model_dirs[0])
     model_cfg = model_dir / "hydra.yaml"
     model_ckpt = model_dir / "checkpoints" / "model_latest.pth"
 

@@ -40,11 +40,13 @@ def contrastive_energy_ranking_loss(
         return history.new_tensor(0.0)
 
     if neg_mode == "shuffle":
-        perm = torch.randperm(batch_size, device=history.device)
+        #perm = torch.randperm(batch_size, device=history.device)
+        perm = torch.roll(torch.arange(batch_size, device=history.device), shifts=1)
         neg_action = action[perm]
         neg_z_next = z_next[perm]
     elif neg_mode == "wrong_action":
-        perm = torch.randperm(batch_size, device=history.device)
+        #perm = torch.randperm(batch_size, device=history.device)
+        perm = torch.roll(torch.arange(batch_size, device=history.device), shifts=1)
         neg_action = action[perm]
         neg_z_next = z_next
     elif neg_mode == "small_noise":
@@ -57,20 +59,21 @@ def contrastive_energy_ranking_loss(
     else:
         raise ValueError(f"Unknown neg_mode: {neg_mode}")
 
-    e_pos = model.penalty(
-        history,
-        action,
-        z_next,
+    hist_all = torch.cat([history, history], dim=0)
+    act_all = torch.cat([action, neg_action], dim=0)
+    z_all = torch.cat([z_next, neg_z_next], dim=0)
+
+    e_all = model.penalty(
+        hist_all,
+        act_all,
+        z_all,
         noise_level=noise_level,
         reduction="none",
     )
-    e_neg = model.penalty(
-        history,
-        neg_action,
-        neg_z_next,
-        noise_level=noise_level,
-        reduction="none",
-    )
+
+    e_pos, e_neg = e_all.chunk(2, dim=0)
+    #loss = F.relu(margin + e_pos - e_neg).mean()
+
 
     return F.relu(margin + e_pos - e_neg).mean()
 
@@ -252,17 +255,20 @@ def train_feasibility_model(
                 scheduler=scheduler,
                 reduction="mean",
             )
-            delta_loss = model.delta_loss(
-                history,
-                action,
-                z_next,
-                reduction="mean",
-                target=delta_target_mode,
-                world_model=world_model,
-                latent_mean=latent_mean,
-                latent_std=latent_std,
-                past_action_history=past_action_history,
-            )
+
+            delta_loss = history.new_tensor(0.0)
+            if lambda_delta > 0.0:
+                delta_loss = model.delta_loss(
+                    history,
+                    action,
+                    z_next,
+                    reduction="mean",
+                    target=delta_target_mode,
+                    world_model=world_model,
+                    latent_mean=latent_mean,
+                    latent_std=latent_std,
+                    past_action_history=past_action_history,
+                )
 
             contrastive_loss = history.new_tensor(0.0)
             if lambda_contrastive > 0.0:
@@ -275,9 +281,18 @@ def train_feasibility_model(
                     margin=contrastive_margin,
                     neg_mode=contrastive_neg_mode,
                 )
-            
-            # full loss term with weights
+
             loss = dsm_loss + lambda_delta * delta_loss + lambda_contrastive * contrastive_loss
+            if epoch == 1 and train_count == 0:
+                print(
+                    "LOSS DEBUG | "
+                    f"dsm={dsm_loss.item():.6f} "
+                    f"delta={delta_loss.item():.6f} "
+                    f"weighted_delta={(lambda_delta * delta_loss).item():.6f} "
+                    f"contrastive={contrastive_loss.item():.6f} "
+                    f"weighted_contrastive={(lambda_contrastive * contrastive_loss).item():.6f} "
+                    f"total={loss.item():.6f}"
+                )
             
             
             if not torch.isfinite(loss):
@@ -320,25 +335,27 @@ def train_feasibility_model(
                     delta_loss = model.delta_loss(history,action,z_next,reduction="mean", target=delta_target_mode, world_model=world_model, latent_mean=latent_mean, latent_std=latent_std, past_action_history=past_action_history)
                     loss = dsm_loss + lambda_delta * delta_loss
                     """
-
                     dsm_loss = model.dsm_loss(
                         history,
                         action,
                         z_next,
-                        noise_level=noise_level,
+                        scheduler=scheduler,
                         reduction="mean",
                     )
-                    delta_loss = model.delta_loss(
-                        history,
-                        action,
-                        z_next,
-                        reduction="mean",
-                        target=delta_target_mode,
-                        world_model=world_model,
-                        latent_mean=latent_mean,
-                        latent_std=latent_std,
-                        past_action_history=past_action_history,
-                    )
+
+                    delta_loss = history.new_tensor(0.0)
+                    if lambda_delta > 0.0:
+                        delta_loss = model.delta_loss(
+                            history,
+                            action,
+                            z_next,
+                            reduction="mean",
+                            target=delta_target_mode,
+                            world_model=world_model,
+                            latent_mean=latent_mean,
+                            latent_std=latent_std,
+                            past_action_history=past_action_history,
+                        )
 
                     contrastive_loss = history.new_tensor(0.0)
                     if lambda_contrastive > 0.0:
@@ -351,6 +368,7 @@ def train_feasibility_model(
                             margin=contrastive_margin,
                             neg_mode=contrastive_neg_mode,
                         )
+
                     loss = dsm_loss + lambda_delta * delta_loss + lambda_contrastive * contrastive_loss
 
 
@@ -376,6 +394,9 @@ def train_feasibility_model(
                     "lambda_delta": lambda_delta,
 
                     "delta_target_mode": delta_target_mode,
+                    "lambda_contrastive": lambda_contrastive,
+                    "contrastive_margin": contrastive_margin,
+                    "contrastive_neg_mode": contrastive_neg_mode,
                 },
                 out,
             )
@@ -393,6 +414,9 @@ def train_feasibility_model(
                 "train_loss": train_loss,
                 "val_loss": val_loss,
                 "lambda_delta": lambda_delta,
+                "lambda_contrastive": lambda_contrastive,
+                "contrastive_margin": contrastive_margin,
+                "contrastive_neg_mode": contrastive_neg_mode,
             },
             final_out,
         )

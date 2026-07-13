@@ -4,7 +4,7 @@ from typing import Any, Callable
 import torch
 
 from .config import PlannerConfig
-from .feasibility_model.model import FeasibilityModel
+from extension.feasibility2.model import FeasibilityModel
 from .interfaces import MPCResult, MPCStepResult, VideoPlan, VideoPlanSource, WorldModelAdapter
 from .solver import LatentCollocationSolver
 from .utils import ensure_history_length, shift_action_warm_start, shift_latent_warm_start
