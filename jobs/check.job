@@ -1,0 +1,26 @@
+#!/bin/bash
+#SBATCH --partition=rome
+#SBATCH --job-name=check_tensors
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=32G
+#SBATCH --time=2:00:00
+#SBATCH --output=/home/nvzutphen/logs/check_tensors_%j.out
+#SBATCH --error=/home/nvzutphen/logs/check_tensors_%j.err
+
+set -euo pipefail
+
+module purge
+module load 2025
+module load Anaconda3/2025.06-1
+
+export CONDA_PREFIX="$HOME/.conda/envs/dl2_new"
+export PATH="$CONDA_PREFIX/bin:$PATH"
+
+cd "$HOME"
+
+export PYTHON="$CONDA_PREFIX/bin/python"
+export PYTHONPATH="$HOME:$HOME/dino_wm:${PYTHONPATH:-}"
+export WANDB_MODE=disabled
+
+$PYTHON -u -m plots.check_tensors
