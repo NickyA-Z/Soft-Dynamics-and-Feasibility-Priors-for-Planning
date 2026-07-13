@@ -230,7 +230,7 @@ class LatentCollocationSolver:
 
             # Contrastive penalty (NEW, optional)
             if self.config_feasibility.lambda_contrastive_plan > 0:
-                total_penalty = candidate_latents.new_tensor(0.0)
+                #total_penalty = candidate_latents.new_tensor(0.0)
                 anchor_emb = self.feasibility_model.get_embedding(
                     history=history_window.reshape(self.world_model.history_length, -1),
                     action=candidate_actions[index],

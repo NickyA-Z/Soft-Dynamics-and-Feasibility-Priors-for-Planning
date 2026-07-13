@@ -9,7 +9,7 @@ from .interfaces import MPCResult, MPCStepResult, VideoPlan, VideoPlanSource, Wo
 from .solver import LatentCollocationSolver
 from .utils import ensure_history_length, shift_action_warm_start, shift_latent_warm_start
 from .video import temporal_resample_sequence
-
+from extension.feasibility2.langevin import langevin_action_search
 
 class GVPWMPlanner:
     def __init__(
@@ -31,6 +31,97 @@ class GVPWMPlanner:
             feasibility_model=feasibility_model,
         )
 
+    # for langevin? 
+    def _rollout_cost(
+        self,
+        latent_context: torch.Tensor,
+        past_action_context: torch.Tensor,
+        goal_latent: torch.Tensor,
+        video_latents: torch.Tensor,
+        actions: torch.Tensor,
+    ) -> torch.Tensor:
+        rollout = self.world_model.rollout(
+            latent_context=latent_context,
+            past_action_context=past_action_context,
+            planned_actions=actions,
+        )
+
+        goal_cost = self.world_model.goal_loss(
+            rollout[-1],
+            goal_latent,
+        )
+
+        if self.config.refinement.objective == "goal":
+            return goal_cost
+
+        if self.config.refinement.objective != "planner":
+            raise ValueError(
+                f"Unknown refinement objective: "
+                f"{self.config.refinement.objective}"
+            )
+
+        video_cost = rollout.new_zeros(())
+
+        if self.config.alm.use_video_loss and rollout.shape[0] > 2:
+            for index in range(1, rollout.shape[0] - 1):
+                video_cost = video_cost + (
+                    self.world_model.video_alignment_loss(
+                        rollout[index],
+                        video_latents[index],
+                    )
+                )
+
+        action_cost = actions.square().sum()
+
+        cost = (
+            self.config.alm.lambda_video * video_cost
+            + self.config.alm.lambda_goal * goal_cost
+            + self.config.alm.lambda_action * action_cost
+        )
+
+        return cost
+
+    def _langevin_refine_actions(
+        self,
+        latent_context: torch.Tensor,
+        past_action_context: torch.Tensor,
+        goal_latent: torch.Tensor,
+        video_latents: torch.Tensor,
+        actions: torch.Tensor,
+    ) -> torch.Tensor:
+        config = self.config.langevin_action
+
+        if not config.enabled:
+            return actions
+
+        result = langevin_action_search(
+            initial_actions=actions,
+            cost_fn=lambda candidate_actions: self._rollout_cost(
+                latent_context=latent_context,
+                past_action_context=past_action_context,
+                goal_latent=goal_latent,
+                video_latents=video_latents,
+                actions=candidate_actions,
+            ),
+            action_low=self.world_model.action_low,
+            action_high=self.world_model.action_high,
+            num_steps=config.num_steps,
+            step_size=config.step_size,
+            temperature=config.temperature,
+            num_restarts=config.num_restarts,
+            restart_noise_std=config.restart_noise_std,
+            grad_clip_norm=config.grad_clip_norm,
+            add_noise=config.add_noise,
+        )
+
+        print(
+            "[Langevin action search] "
+            f"initial_cost={result.initial_cost:.6f} "
+            f"best_cost={result.cost:.6f}"
+        )
+
+        return result.actions
+
     def _encode_video(self, video_plan: VideoPlan, horizon: int) -> torch.Tensor:
         if video_plan.encoded:
             encoded = torch.as_tensor(video_plan.data, dtype=torch.float32, device=self.world_model.device)
@@ -46,6 +137,15 @@ class GVPWMPlanner:
         video_latents: torch.Tensor,
         actions: torch.Tensor,
     ) -> torch.Tensor:
+        if self.config.langevin_action.enabled:
+            return self._langevin_refine_actions(
+                latent_context=latent_context,
+                past_action_context=past_action_context,
+                goal_latent=goal_latent,
+                video_latents=video_latents,
+                actions=actions,
+            )
+
         if not self.config.refinement.enabled or self.config.refinement.num_samples <= 0:
             return actions
         device = actions.device

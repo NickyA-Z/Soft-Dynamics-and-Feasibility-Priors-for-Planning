@@ -82,7 +82,17 @@ class MPCConfig:
     horizon: int = 25
     execution_stride: int = 1
     warm_start: bool = True
-
+    
+@dataclass
+class LangevinActionConfig:
+    enabled: bool = False
+    num_steps: int = 20
+    step_size: float = 1e-3
+    temperature: float = 1e-4
+    num_restarts: int = 1
+    restart_noise_std: float = 0.05
+    grad_clip_norm: float | None = 10.0
+    add_noise: bool = True
 
 @dataclass
 class PlannerConfig:
@@ -91,6 +101,8 @@ class PlannerConfig:
     refinement: RefinementConfig = field(default_factory=RefinementConfig)
     solver: SolverConfig | None = None
     feasibility: FeasibilityConfig = field(default_factory=FeasibilityConfig)
+
+    langevin_action: LangevinActionConfig = field(default_factory=LangevinActionConfig)
 
     def __post_init__(self) -> None:
         if self.solver is None:
