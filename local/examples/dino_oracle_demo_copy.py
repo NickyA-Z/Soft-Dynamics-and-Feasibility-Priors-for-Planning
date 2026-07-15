@@ -2,26 +2,35 @@ from __future__ import annotations
 
 import argparse
 from html import parser
+from logging import config
 import pickle
+from pprint import pprint
 import sys
 from pathlib import Path
 
 import gym
 import numpy as np
-from reimplementation.src.gvpwm.examples.dino_oracle_diagnose import expert_macro_actions
+from local.gvpwm.examples.dino_oracle_diagnose import expert_macro_actions
 import torch
 from omegaconf import OmegaConf
 
-from reimplementation.src.gvpwm.adapters.dino_wm import DinoWorldModelAdapter
-from reimplementation.src.gvpwm.config import ALMConfig, MPCConfig, PlannerConfig, RefinementConfig, FeasibilityConfig
-from reimplementation.src.gvpwm.planner import GVPWMPlanner
-from reimplementation.src.gvpwm.video import PrecomputedVideoPlanSource
-from reimplementation.src.gvpwm.examples.dino_oracle_utils import load_oracle_episode, slice_oracle_episode
-from extension.feasibility2.model import load_feasibility_model_from_checkpoint
+from local.gvpwm.adapters.dino_wm import DinoWorldModelAdapter
+from local.gvpwm.config import ALMConfig, MPCConfig, PlannerConfig, RefinementConfig, FeasibilityConfig, LangevinActionConfig
+from local.gvpwm.planner import GVPWMPlanner
+from local.gvpwm.video import PrecomputedVideoPlanSource
+from local.gvpwm.examples.dino_oracle_utils import load_oracle_episode, slice_oracle_episode
 
+from reimplementation.src.gvpwm.langevin import (
+    ActionEvaluation,
+    LangevinAdamConfig,
+    MultiStartAdamConfig,
+    make_initial_action_parameters,
+    run_langevin_adam,
+    run_multistart_adam,
+)
 
 import torch.nn.functional as F
-from reimplementation.src.gvpwm.losses import scale_invariant_alignment
+from local.gvpwm.losses import scale_invariant_alignment
 
 
 
@@ -94,6 +103,13 @@ def load_model_once(device):
     model = load_model(model_ckpt, model_cfg, model_cfg.num_action_repeat, device=device)
     return model, model_cfg
 
+def _print_config(config) -> None:
+    print("\nPlanner configuration:")
+    if is_dataclass(config):
+        pprint(asdict(config), sort_dicts=False)
+    else:
+        pprint(config, sort_dicts=False)
+
 # cleaned config
 def build_planner(
     world_model: DinoWorldModelAdapter,
@@ -110,38 +126,36 @@ def build_planner(
     lambda_transition: float,
     lambda_action_consistency: float,
 
+    # added 21 may
+    lambda_action: float,
+
     diagnostic_inner_interval: int | None = None,  # Print solver diagnostics every N inner steps. None disables inner logging.
     diagnostic_outer: bool = False,  # Whether to print diagnostics after each outer solver loop.
+
+    action_search: str, # search for langevin or multistart_adam
 
 ) -> GVPWMPlanner:
     # Penalizes large actions. Smaller horizon gets slightly lower penalty.
     # If too high, actions stay tiny. If too low, actions may become noisy/large.
-    feasibility_model = None
-    if feasibility_enabled:
-        feasibility_model = load_feasibility_model_from_checkpoint(
-            feasibility_checkpoint,
-            map_location=world_model.device,
-        )
-
     return GVPWMPlanner(
         world_model=world_model,
         config=PlannerConfig(
             alm=ALMConfig(
-                inner_steps=25, #(22749227:25))
+                inner_steps=100,  #(22749227:25))
                 outer_steps=1,
-                learning_rate=0.01,  # Adam step size for optimizing latent/action variables.
+                learning_rate=0.03,  # 0.01# Adam step size for optimizing latent/action variables.
                 rho_init=1.0,
                 rho_growth=1.9,
                 rho_max=1_000.0,
                 lambda_video=1.0,  # Weight for matching intermediate latents to the reference/oracle video.
                 lambda_goal=10.0,  # Weight for matching final latent to the goal latent.
-                lambda_action=0.0,  # Weight for action L2 regularization: actions.pow(2).sum().
+                lambda_action=lambda_action,  # Weight for action L2 regularization: actions.pow(2).sum().
                 lambda_action_prior=0.0,  # Optional weight for staying close to warm-start/prior actions.
                 clip_grad_norm=None,  # If set, clips gradient norm of optimized action/latent parameters.
                 use_video_init=True,  # If True, initialize latent trajectory from video latents; if False, interpolate current->goal.
                 use_video_loss=True,  # If True, include video alignment loss for intermediate latents.
                 fix_states_to_video=False,  # If True, fix latents and only optimize actions.
-                use_action_reparameterization=True,  # (22749227:True)If True, optimize unconstrained params through tanh into action bounds.
+                use_action_reparameterization=True, # false # (22749227:True)If True, optimize unconstrained params through tanh into action bounds.
                 adam_eps=1e-8,  # Numerical epsilon used by Adam optimizer.
                 diagnostic_inner_interval=diagnostic_inner_interval,  # Frequency for inner optimization debug prints.
                 diagnostic_outer=diagnostic_outer,  # Whether to print after each outer loop.
@@ -161,12 +175,13 @@ def build_planner(
             mpc= MPCConfig(
                 horizon=horizon,  # Number of macro actions planned at each MPC solve.
                 execution_stride=1,  # Number of planned macro actions executed before replanning.
-                warm_start=True,  # Reuse previous solution as initialization for next MPC step.
+                warm_start=False,  # Reuse previous solution as initialization for next MPC step.
             ),
             refinement= RefinementConfig(
-                enabled=False,  # If True, use extra sampling/refinement after gradient optimization.
-                num_samples=0,  # Number of sampled candidate action sequences for refinement.
+                enabled=True,  # If True, use extra sampling/refinement after gradient optimization.
+                num_samples=500,  # Number of sampled candidate action sequences for refinement.
                 noise_variance=0.3,  # Sampling noise variance for refinement.
+                objective="planner", # new since juli 14
             ),
             feasibility=FeasibilityConfig(
                 enabled=feasibility_enabled,  # If True, load and use learned feasibility model.
@@ -183,8 +198,22 @@ def build_planner(
                 lambda_action_consistency=lambda_action_consistency,  # Optional zero-action comparison term. 0 disables it.
                 action_consistency_margin=0.1,  # Margin for action-consistency term if enabled.
             ),
+            langevin_action=LangevinActionConfig(
+                        enabled=False,  #dynamics_mode == "rollout",
+                        num_steps=1,
+                        step_size=1e-2,
+                        temperature=1e-5,
+                        num_restarts=1,
+                        restart_noise_std=0.2,
+                        grad_clip_norm=10.0,
+                        add_noise=False,
+            ),
+            action_search=ActionSearchConfig(
+                method=action_search,
+                num_starts=8,
+                seed=0,
+            ),
         ),
-        feasibility_model=feasibility_model,
     )
 
 
@@ -253,6 +282,9 @@ def evaluate_episode(
     lambda_transition: float,
     lambda_action_consistency: float,
 
+    # added 21 may
+    lambda_action: float,
+
     episode_idx: int,
     split: str,
     horizon: int,
@@ -264,6 +296,9 @@ def evaluate_episode(
     device=None,
     debug_dynamics_action_discrimination_flag: bool = False,
     feasibility_enabled: bool = True, #also new added 19 may
+
+    action_search: str, # 14 juli 
+
 ) -> dict:
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -327,7 +362,15 @@ def evaluate_episode(
         lambda_feasibility=lambda_feasibility,
         lambda_transition=lambda_transition,
         lambda_action_consistency=lambda_action_consistency,
+
+        # added 21 may
+        lambda_action=lambda_action,
+
+        action_search=action_search, # added 14 juli
     )
+    print("\nPlanner configuration:")
+    print(planner.config)
+
 
     print(
         f"starting planner "
@@ -335,7 +378,7 @@ def evaluate_episode(
         f"dynamics_mode={dynamics_mode}, use_dynamics_constraints={use_dynamics_constraints}, "
         f"lambda_dynamics={lambda_dynamics}, feasibility_enabled={feasibility_enabled}, "
         f"lambda_feasibility={lambda_feasibility}, lambda_transition={lambda_transition}, "
-        f"lambda_action_consistency={lambda_action_consistency})"
+        f"lambda_action_consistency={lambda_action_consistency}, lambda_action={lambda_action})"
     )
 
 
@@ -614,7 +657,7 @@ def evaluate_episode(
         goal_observation=episode["goal_obs"],
         step_fn=traced_step_fn,
         video_source=PrecomputedVideoPlanSource(episode["video_plan"], encoded=False),
-        initial_warm_start_actions=None,
+        initial_warm_start_actions=None, #None, expert_actions
     )
     print("ALM planner finished")
     # ------------------------------------------------------------
@@ -839,7 +882,6 @@ def debug_rollout_objective_action_discrimination(
             actions=actions,
             goal_latent=goal_latent,
             video_latents=video_latents,
-            latent_context=latent_context, #new added 14 juli 
             action_prior=None,
         )
 
@@ -910,6 +952,7 @@ def parse_args():
     parser.add_argument("--debug-inner-every", type=int, default=None, help="Print ALM diagnostics every N inner iterations")
     parser.add_argument("--debug-outer", action="store_true", help="Print diagnostics after every ALM outer iteration")
 
+    parser.add_argument("--lambda-action", type=float, default=0.005, help="L2 regularization weight on actions")
     parser.add_argument("--dynamics-mode", choices=("none", "soft", "alm", "penalty", "rollout"), default="none", help="DINO-WM dynamics mode")
     parser.add_argument("--use-dynamics-constraints", type=str_to_bool, default=False, help="Whether to include dynamics as ALM constraints")
     parser.add_argument("--lambda-dynamics", type=float, default=0.0, help="weight on DINO-WM dynamics loss")
@@ -921,13 +964,21 @@ def parse_args():
     parser.add_argument("--lambda-action-consistency", type=float, default=0.0, help="Weight on action-consistency term inside feasibility model; 0 disables it")
 
 
-    parser.add_argument("--feasibility-checkpoint",type=str,default="/home/scur0196/DL2---Grounding-Generated-Videos-/checkpoints/transformer_sigma_delta.pt",help="Path to feasibility model checkpoint")
+    parser.add_argument("--feasibility-checkpoint",type=str,default="/home/nvzutphen/checkpoints/feasibility_pusht/plain_dsm_full_final.pt",help="Path to feasibility model checkpoint")
 
     parser.add_argument(
         "--debug-dynamics-action-discrimination",
         action="store_true",
         help="Compare DINO-WM dynamics residual for expert, zero, shuffled, negative, and random actions, then exit.",
     )
+
+    parser.add_argument(
+        "--action-search",
+        choices=("multistart_adam", "langevin_adam"),
+        default="multistart_adam",
+    )
+    parser.add_argument("--num-search-chains", type=int, default=8)
+    parser.add_argument("--search-seed", type=int, default=0)
 
     return parser.parse_args()
 
@@ -982,6 +1033,11 @@ def main():
                     lambda_feasibility=args.lambda_feasibility,
                     lambda_transition=args.lambda_transition,
                     lambda_action_consistency=args.lambda_action_consistency,
+
+                    #added 21 may 
+                    lambda_action=args.lambda_action,
+
+                    action_search=args.action_search,  # 14 juli 
                 )
             )
         except Exception as exc:
