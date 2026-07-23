@@ -15,12 +15,12 @@ import torch
 from omegaconf import OmegaConf
 
 from local.gvpwm.adapters.dino_wm import DinoWorldModelAdapter
-from local.gvpwm.config import ALMConfig, MPCConfig, PlannerConfig, RefinementConfig, FeasibilityConfig, LangevinActionConfig
+from local.gvpwm.config import ALMConfig, MPCConfig, PlannerConfig, RefinementConfig, FeasibilityConfig, LangevinActionConfig, ActionSearchConfig
 from local.gvpwm.planner import GVPWMPlanner
 from local.gvpwm.video import PrecomputedVideoPlanSource
 from local.gvpwm.examples.dino_oracle_utils import load_oracle_episode, slice_oracle_episode
 
-from reimplementation.src.gvpwm.langevin import (
+from local.gvpwm.langevin import (
     ActionEvaluation,
     LangevinAdamConfig,
     MultiStartAdamConfig,
@@ -126,13 +126,14 @@ def build_planner(
     lambda_transition: float,
     lambda_action_consistency: float,
 
+    action_search: str, # search for langevin or multistart_adam
+
     # added 21 may
     lambda_action: float,
 
     diagnostic_inner_interval: int | None = None,  # Print solver diagnostics every N inner steps. None disables inner logging.
     diagnostic_outer: bool = False,  # Whether to print diagnostics after each outer solver loop.
 
-    action_search: str, # search for langevin or multistart_adam
 
 ) -> GVPWMPlanner:
     # Penalizes large actions. Smaller horizon gets slightly lower penalty.
@@ -289,6 +290,7 @@ def evaluate_episode(
     split: str,
     horizon: int,
     feasibility_checkpoint: str, # same make model an arg
+    action_search: str, # 14 juli 
     diagnostic_inner_interval: int | None = None,
     diagnostic_outer: bool = False,
     model=None,
@@ -296,8 +298,6 @@ def evaluate_episode(
     device=None,
     debug_dynamics_action_discrimination_flag: bool = False,
     feasibility_enabled: bool = True, #also new added 19 may
-
-    action_search: str, # 14 juli 
 
 ) -> dict:
     if device is None:

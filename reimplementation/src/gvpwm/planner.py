@@ -10,6 +10,7 @@ from .solver import LatentCollocationSolver
 from .utils import ensure_history_length, shift_action_warm_start, shift_latent_warm_start
 from .video import temporal_resample_sequence
 from extension.feasibility2.langevin import langevin_action_search
+from extension.feasibility2.integrate import load_feasibility_scorer
 
 class GVPWMPlanner:
     def __init__(
@@ -18,6 +19,31 @@ class GVPWMPlanner:
         config: PlannerConfig,
         feasibility_model: FeasibilityModel | None = None,
     ) -> None:
+        """
+        self.world_model = world_model
+        self.config = config
+
+        #feasibility integration related logic
+        self.feasibility_model: nn.Module | None = None
+        if self.config.feasibility.enabled:
+            if self.config.feasibility.checkpoint_path is None:
+                raise ValueError(
+                    "config.feasibility.enabled=True, but checkpoint_path is None."
+                )
+
+            # load the model and set to eval mode
+            self.feasibility_model = load_feasibility_scorer(
+                self.config.feasibility.checkpoint_path,
+                device=self.world_model.device,
+                freeze=True, # ToDo need to look into
+            )
+
+        # added feasibility
+        self.solver = LatentCollocationSolver(world_model=world_model, config=config.alm,
+                                            config_feasibility=config.feasibility,
+                                            feasibility_model=self.feasibility_model,
+                                            )
+        """
         if config.feasibility.enabled and feasibility_model is None:
             raise ValueError("Feasibility model must be provided if feasibility is enabled.")
 
@@ -30,7 +56,7 @@ class GVPWMPlanner:
             config_feasibility=config.feasibility,
             feasibility_model=feasibility_model,
         )
-
+    
     # for langevin? 
     def _rollout_cost(
         self,

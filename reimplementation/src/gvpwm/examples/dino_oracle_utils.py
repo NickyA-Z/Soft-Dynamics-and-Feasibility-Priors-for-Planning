@@ -9,7 +9,7 @@ import torch
 
 import sys
 
-DINO_WM_ROOT = Path("/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm")
+DINO_WM_ROOT = Path("/home/nvzutphen/dino_wm")
 if str(DINO_WM_ROOT) not in sys.path:
     sys.path.append(str(DINO_WM_ROOT))
 

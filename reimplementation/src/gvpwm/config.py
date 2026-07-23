@@ -46,6 +46,15 @@ class ALMConfig:
     history_action_pad: str = "zeros"  # "zeros" or "repeat_available" for missing DINO action history
     pad_initial_history: bool = True  # if False, start from available context and let DINO history grow
 
+    # Dynamics configuration
+    dynamics_mode: str = "none"
+    use_dynamics_constraints: bool = False
+    lambda_dynamics: float = 0.0
+
+    # Anti-stillness configuration
+    lambda_anti_stillness: float = 0.0
+    min_action_norm: float = 0.2
+
 
 @dataclass
 class FeasibilityConfig:
@@ -57,6 +66,17 @@ class FeasibilityConfig:
     num_layers: int = 3
     use_layer_norm: bool = False
     noise_level: float = 0.1
+
+    # Model loading and evaluation
+    checkpoint_path: Optional[str] = None
+    reduction: str = "mean"
+    latent_reduction: str = "mean"
+    detach_model: bool = False
+    
+    # Transition/action consistency
+    lambda_transition: float = 0.0
+    lambda_action_consistency: float = 0.0
+    action_consistency_margin: float = 0.1
 
     # NEW: Contrastive learning
     lambda_contrastive_train: float = 0.0  # 0 = disabled, >0 = weight in training
@@ -91,7 +111,7 @@ class LangevinActionConfig:
     temperature: float = 1e-4
     num_restarts: int = 1
     restart_noise_std: float = 0.05
-    grad_clip_norm: float | None = 10.0
+    grad_clip_norm: Optional[float] = 10.0
     add_noise: bool = True
 
 @dataclass
@@ -99,7 +119,7 @@ class PlannerConfig:
     alm: ALMConfig = field(default_factory=ALMConfig)
     mpc: MPCConfig = field(default_factory=MPCConfig)
     refinement: RefinementConfig = field(default_factory=RefinementConfig)
-    solver: SolverConfig | None = None
+    solver: Optional[SolverConfig] = None
     feasibility: FeasibilityConfig = field(default_factory=FeasibilityConfig)
 
     langevin_action: LangevinActionConfig = field(default_factory=LangevinActionConfig)

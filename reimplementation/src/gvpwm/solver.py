@@ -19,8 +19,13 @@ class LatentCollocationSolver:
         config_feasibility = config_feasibility or FeasibilityConfig(enabled=False)
         if config_feasibility.enabled and feasibility_model is None:
             raise ValueError("Feasibility model must be provided if feasibility is enabled.")
+
         self.world_model = world_model
         self.config = config
+
+        if config_feasibility.enabled and feasibility_model is not None:
+            feasibility_model = feasibility_model.to(self.world_model.device)
+
         self.config_feasibility = config_feasibility
         self.feasibility_model = feasibility_model
 
@@ -200,6 +205,101 @@ class LatentCollocationSolver:
             objective = objective + self.config_feasibility.lambda_feasibility * feasibility_penalty
             pieces["feasibility_penalty"] = feasibility_penalty
         return objective, pieces
+        
+    def _rollout_world_model(
+        self,
+        latent_context: torch.Tensor,
+        past_action_context: torch.Tensor,
+        candidate_actions: torch.Tensor,
+    ) -> torch.Tensor:
+        """Generate candidate latents by recursively applying DINO-WM.
+
+        Returns:
+            candidate_latents: [H + 1, *latent_shape]
+        """
+        current_latent = latent_context[-1]
+        generated_latents = [current_latent]
+
+        if self.config.pad_initial_history:
+            history = ensure_history_length(
+                latent_context,
+                self.world_model.history_length,
+                pad_mode="repeat_first",
+            )
+        else:
+            history = latent_context[-self.world_model.history_length :]
+
+        if self.world_model.history_length > 1:
+            action_context_len = self.world_model.history_length - 1
+            action_context = past_action_context[-action_context_len:].clone()
+
+            missing_actions = action_context_len - action_context.shape[0]
+            if not self.config.pad_initial_history:
+                missing_actions = max(
+                    history.shape[0] - 1 - action_context.shape[0],
+                    0,
+                )
+
+            if missing_actions > 0:
+                if self.config.history_action_pad == "zeros":
+                    pad = candidate_actions.new_zeros(
+                        missing_actions,
+                        self.world_model.action_dim,
+                    )
+                elif self.config.history_action_pad == "repeat_available":
+                    if action_context.shape[0] > 0:
+                        pad_value = action_context[:1]
+                    else:
+                        pad_value = candidate_actions[:1]
+                    pad = pad_value.expand(missing_actions, -1)
+                else:
+                    raise ValueError(
+                        f"Unknown history_action_pad: {self.config.history_action_pad}"
+                    )
+
+                action_context = torch.cat([pad, action_context], dim=0)
+        else:
+            action_context = candidate_actions.new_zeros(
+                (0, self.world_model.action_dim)
+            )
+
+        for index in range(candidate_actions.shape[0]):
+            if len(generated_latents) > 1:
+                generated_so_far = torch.stack(generated_latents[1:], dim=0)
+                state_source = torch.cat([history, generated_so_far], dim=0)
+            else:
+                state_source = history
+
+            state_window = state_source[-self.world_model.history_length :]
+
+            action_window_full = torch.cat(
+                [action_context, candidate_actions[: index + 1]],
+                dim=0,
+            )
+
+            action_window_len = (
+                self.world_model.history_length
+                if self.config.pad_initial_history
+                else state_window.shape[0]
+            )
+
+            action_window = action_window_full[-action_window_len:]
+
+            if action_window.shape[0] < state_window.shape[0]:
+                pad = candidate_actions.new_zeros(
+                    state_window.shape[0] - action_window.shape[0],
+                    self.world_model.action_dim,
+                )
+                action_window = torch.cat([pad, action_window], dim=0)
+
+            predicted_next = self.world_model.predict_next_latent(
+                state_window,
+                action_window,
+            )
+
+            generated_latents.append(predicted_next)
+
+        return torch.stack(generated_latents, dim=0)
 
     def _feasibility_penalty(
         self,
@@ -209,6 +309,7 @@ class LatentCollocationSolver:
     ) -> torch.Tensor:
         if self.feasibility_model is None:
             raise ValueError("Feasibility model is required for feasibility penalty.")
+        
         history = ensure_history_length(
             latent_context,
             self.world_model.history_length,
@@ -221,9 +322,9 @@ class LatentCollocationSolver:
                 -self.world_model.history_length :
             ]
             total_penalty = total_penalty + self.feasibility_model.penalty(
-                history=history_window.reshape(self.world_model.history_length, -1),
+                history=history_window, #.reshape(self.world_model.history_length, -1),
                 action=candidate_actions[index],
-                z_noisy=candidate_latents[index + 1].reshape(-1),
+                z_next=candidate_latents[index + 1], #.reshape(-1), #z_noisy 
                 noise_level=noise_level,
                 reduction="mean",
             )
@@ -239,11 +340,20 @@ class LatentCollocationSolver:
                 )
                 # Distance to "typical infeasible region" (e.g., mean of training negatives)
                 # This is a placeholder; you'd cache reference embeddings during init
-                ref_embedding = getattr(self.feasibility_model, 'mean_infeasible_embedding', anchor_emb)
+                if not hasattr(self.feasibility_model, "mean_infeasible_embedding"):
+                    raise ValueError(
+                        "lambda_contrastive_plan is enabled, but the feasibility model "
+                        "does not define mean_infeasible_embedding."
+                    )
+
+                ref_embedding = self.feasibility_model.mean_infeasible_embedding
                 contrastive_penalty = torch.nn.functional.cosine_similarity(
-                    anchor_emb.unsqueeze(0), ref_embedding.unsqueeze(0)
+                    anchor_emb.unsqueeze(0),
+                    ref_embedding.unsqueeze(0),
                 )
-                total_penalty = total_penalty + self.config_feasibility.lambda_contrastive_plan * contrastive_penalty
+                total_penalty = total_penalty + (
+                    self.config_feasibility.lambda_contrastive_plan * contrastive_penalty
+                )
         
         return total_penalty
 

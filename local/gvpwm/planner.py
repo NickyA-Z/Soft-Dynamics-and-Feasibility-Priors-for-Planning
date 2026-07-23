@@ -42,6 +42,7 @@ class GVPWMPlanner:
                                             feasibility_config=config.feasibility,
                                             feasibility_model=self.feasibility_model,
                                             langevin_config=config.langevin_action,
+                                            action_search_config=config.action_search,
                                             )
 
     def _encode_video(self, video_plan: VideoPlan, horizon: int) -> torch.Tensor:

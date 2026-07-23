@@ -6,10 +6,19 @@ import torch
 import torch.nn as nn
 from local.feasibility2.integrate import score_trajectory_feasibility
 
-from .config import ALMConfig, FeasibilityConfig, LangevinActionConfig
+from .config import ALMConfig, FeasibilityConfig, LangevinActionConfig, ActionSearchConfig
 from .interfaces import CollocationResult, WorldModelAdapter
 from .losses import squared_norm
 from .utils import ensure_history_length
+
+from local.gvpwm.langevin import (
+    ActionEvaluation,
+    LangevinAdamConfig,
+    MultiStartAdamConfig,
+    make_initial_action_parameters,
+    run_langevin_adam,
+    run_multistart_adam,
+)
 
 VERBOSE_DIAGNOSTICS = os.environ.get("WALL_VERBOSE_DIAGNOSTICS", "0") == "1"
 
@@ -25,6 +34,9 @@ class LatentCollocationSolver:
         self.feasibility_model = feasibility_model # feasibility integration
         self.langevin_config = (
             langevin_config or LangevinActionConfig(enabled=False)
+        )
+        self.action_search_config = (
+            action_search_config or ActionSearchConfig()
         )
 
     def _actions_from_parameter(self, action_parameter: torch.Tensor) -> torch.Tensor:
@@ -579,37 +591,19 @@ class LatentCollocationSolver:
             eps=self.config.adam_eps,
         )
 
-
-
-        # Existing ALM path continues here.
+        # Existing single-start Adam/ALM path continues here.
+        # The multistart_adam and langevin_adam branches returned above.
         action_parameter = torch.nn.Parameter(base_parameter)
 
-
-        initial_actions_for_debug = self._actions_from_parameter(action_parameter.detach()).clone()
-        parameters = [action_parameter]
+        parameters: list[torch.nn.Parameter] = [action_parameter]
         if latent_parameter is not None:
             parameters.insert(0, latent_parameter)
 
-        # new optimiser for langevin 
-        use_langevin = (
-            self.config.dynamics_mode == "rollout"
-            and self.langevin_config.enabled
-        )
-
-        optimizer = None
-
-        if not use_langevin:
-            optimizer = torch.optim.Adam(
-                parameters,
-                lr=self.config.learning_rate,
-                eps=self.config.adam_eps,
-            )
-        """
         optimizer = torch.optim.Adam(
             parameters,
             lr=self.config.learning_rate,
             eps=self.config.adam_eps,
-        )"""
+        )
 
         residual_shape = (horizon,) + tuple(current_latent.shape)
         multipliers = torch.zeros(
@@ -619,31 +613,17 @@ class LatentCollocationSolver:
         )
         rho = float(self.config.rho_init)
 
-        diagnostics: dict[str, float] = {}
-        final_objective = current_latent.new_tensor(0.0)
-        final_augmented = current_latent.new_tensor(0.0)
         final_residuals = torch.zeros_like(multipliers)
-
-        # for langevin 
-        best_rollout_cost = float("inf")
-        best_rollout_actions: torch.Tensor | None = None
-        best_rollout_latents: torch.Tensor | None = None
-        best_rollout_diagnostics: dict[str, float] | None = None
-        best_rollout_base_cost = float("inf")
 
         for outer_index in range(self.config.outer_steps):
             for inner_index in range(self.config.inner_steps):
-                #optimizer.zero_grad()
-                # new optimiser langevin
-                if optimizer is not None:
-                    optimizer.zero_grad()
-                else:
-                    for parameter in parameters:
-                        parameter.grad = None
-                    
-                actions = self._actions_from_parameter(action_parameter)
+                optimizer.zero_grad(set_to_none=True)
+
+                actions = self._actions_from_parameter(
+                    action_parameter
+                )
+
                 if self.config.dynamics_mode == "rollout":
-                    # generate latents from wm with the candidate actions.
                     candidate_latents = self._rollout_world_model(
                         latent_context=latent_context,
                         past_action_context=past_action_context,
@@ -653,12 +633,14 @@ class LatentCollocationSolver:
                     candidate_latents = initial_latents
                 else:
                     candidate_latents = torch.cat(
-                        [current_latent.unsqueeze(0), latent_parameter],
+                        [
+                            current_latent.unsqueeze(0),
+                            latent_parameter,
+                        ],
                         dim=0,
                     )
-                # normal ALM residuals
-                if self.config.dynamics_mode in ("alm", "soft"):
-                    # here actions and latents are tied together in the residuals, 
+
+                if self.config.dynamics_mode in {"alm", "soft"}:
                     residuals = self._dynamics_residuals(
                         latent_context=latent_context,
                         past_action_context=past_action_context,
@@ -666,13 +648,10 @@ class LatentCollocationSolver:
                         candidate_actions=actions,
                     )
                 else:
-                    # feasibility only optimisation
                     residuals = candidate_latents.new_zeros(
                         (horizon,) + tuple(current_latent.shape)
                     )
 
-                # compute collocation objective (video alignment, goal loss, action regularization)
-                # compute collocation objective (video alignment, goal loss, action regularization)
                 objective, pieces = self._objective(
                     latents=candidate_latents,
                     actions=actions,
@@ -681,363 +660,375 @@ class LatentCollocationSolver:
                     action_prior=action_prior,
                 )
 
-                # extra testing
                 augmented = objective
-                zero = current_latent.new_tensor(0.0)
+                zero = objective.new_tensor(0.0)
 
-                # Defaults for diagnostics.
-                pieces["dynamics_penalty"] = zero
-                pieces["weighted_dynamics_penalty"] = zero
-                pieces["feasibility_loss"] = zero
-                pieces["weighted_feasibility"] = zero
-                pieces["dsm_energy"] = zero
-                pieces["transition_energy"] = zero
-                pieces["weighted_transition_energy"] = zero
-   
-                # Soft (feasibility) world-model dynamics penalty
+                pieces.setdefault("dynamics_penalty", zero)
+                pieces.setdefault("weighted_dynamics_penalty", zero)
+                pieces.setdefault("feasibility_loss", zero)
+                pieces.setdefault("weighted_feasibility", zero)
+                pieces.setdefault("dsm_energy", zero)
+                pieces.setdefault("transition_energy", zero)
+                pieces.setdefault("weighted_transition_energy", zero)
+
                 if self.config.dynamics_mode == "soft":
-                    dynamics_penalty, dynamics_pieces = self._dynamics_penalty(residuals)
+                    dynamics_penalty, dynamics_pieces = (
+                        self._dynamics_penalty(residuals)
+                    )
                     augmented = augmented + dynamics_penalty
                     pieces.update(dynamics_pieces)
 
-                # Learned feasibility penalty ONLY (ignoring dynamics constraints)
                 if (
                     self.feasibility_config is not None
                     and self.feasibility_config.enabled
                 ):
-                    feasibility_penalty, feasibility_pieces = self._feasibility_penalty(
-                        latent_context=latent_context,
-                        candidate_latents=candidate_latents,
-                        candidate_actions=actions,
+                    feasibility_penalty, feasibility_pieces = (
+                        self._feasibility_penalty(
+                            latent_context=latent_context,
+                            candidate_latents=candidate_latents,
+                            candidate_actions=actions,
+                        )
                     )
-                    # so unles we gate this, if ALM=true we do both alm+feasibility!
                     augmented = augmented + feasibility_penalty
                     pieces.update(feasibility_pieces)
-                    pieces["weighted_feasibility"] = feasibility_penalty
-
-                dual_term = current_latent.new_tensor(0.0)
-                rho_penalty = current_latent.new_tensor(0.0)
-
-                # for feasibility only optimisation
-                # debug to check feasibility loss
-                if VERBOSE_DIAGNOSTICS and outer_index == 0 and inner_index == 0:
-                    debug_pieces = {}
-                    for k, v in pieces.items():
-                        if torch.is_tensor(v):
-                            debug_pieces[k] = float(v.detach().cpu())
-                        else:
-                            debug_pieces[k] = float(v)
-
-                    weighted_goal = self.config.lambda_goal * debug_pieces.get("goal_loss", 0.0)
-                    weighted_video = self.config.lambda_video * debug_pieces.get("video_loss", 0.0)
-                    weighted_action = self.config.lambda_action * debug_pieces.get("action_loss", 0.0)
-                    weighted_transition = debug_pieces.get("weighted_transition_energy", 0.0)
-                    weighted_feas = debug_pieces.get("weighted_feasibility", 0.0)
-                    lambda_transition_cfg = debug_pieces.get(
-                        "configured_lambda_transition",
-                        0.0,
+                    pieces["weighted_feasibility"] = (
+                        feasibility_penalty
                     )
 
-                    print(
-                        f"[objective summary] "
-                        f"w_goal={weighted_goal:.4f} "
-                        f"w_video={weighted_video:.4f} "
-                        f"w_action={weighted_action:.4f} "
-                        f"w_feas={weighted_feas:.4f} "
-                        f"w_transition={weighted_transition:.4f} "
-                        f"lambda_transition_cfg={lambda_transition_cfg:.4f} "
-                        f"dsm={debug_pieces.get('dsm_energy', 0.0):.4f} "
-                        f"transition={debug_pieces.get('transition_energy', 0.0):.4f}"
-                    )
+                dual_term = objective.new_tensor(0.0)
+                rho_penalty = objective.new_tensor(0.0)
 
-                # ALM-specific terms
                 if self.config.dynamics_mode == "alm":
                     if self.config.residual_reduction == "mean":
-                        pen_scale = 1.0 / float(residuals[0].numel())
+                        penalty_scale = (
+                            1.0 / float(residuals[0].numel())
+                        )
                     else:
-                        pen_scale = 1.0
+                        penalty_scale = 1.0
+
                     for index in range(residuals.shape[0]):
-                        dual_piece = (multipliers[index] * residuals[index]).sum()
-                        penalty_piece = 0.5 * rho * pen_scale * squared_norm(residuals[index])
+                        dual_piece = (
+                            multipliers[index] * residuals[index]
+                        ).sum()
 
-                        augmented = augmented + dual_piece + penalty_piece
+                        penalty_piece = (
+                            0.5
+                            * rho
+                            * penalty_scale
+                            * squared_norm(residuals[index])
+                        )
+
+                        augmented = (
+                            augmented
+                            + dual_piece
+                            + penalty_piece
+                        )
                         dual_term = dual_term + dual_piece
-                        rho_penalty = rho_penalty + penalty_piece
+                        rho_penalty = (
+                            rho_penalty + penalty_piece
+                        )
 
-                # main optimising loop? 
+                if not torch.isfinite(augmented):
+                    raise RuntimeError(
+                        "Non-finite optimization objective: "
+                        f"objective="
+                        f"{float(objective.detach().cpu())}, "
+                        f"augmented="
+                        f"{float(augmented.detach().cpu())}"
+                    )
+
                 augmented.backward()
 
-                if inner_index % 10 == 0:
-                    grad = action_parameter.grad
-                    print(
-                        f"[langevin {inner_index}] "
-                        f"cost={float(augmented.detach().cpu()):.6f} "
-                        f"grad_norm={float(grad.norm().detach().cpu()) if grad is not None else float('nan'):.6e} "
-                        f"action_norm={float(actions.norm().detach().cpu()):.6f}"
+                if action_parameter.grad is None:
+                    raise RuntimeError(
+                        "No gradient reached the action parameters."
                     )
 
-                if VERBOSE_DIAGNOSTICS and self.config.dynamics_mode == "rollout" and (
-                    (outer_index == 0 and inner_index < 3)
-                    or (
-                        outer_index == self.config.outer_steps - 1
-                        and inner_index == self.config.inner_steps - 1
+                if not torch.isfinite(
+                    action_parameter.grad
+                ).all():
+                    raise RuntimeError(
+                        "Non-finite action gradient."
                     )
-                ):
-                    action_grad = action_parameter.grad
-                    action_grad_norm = (
-                        float(action_grad.norm().detach().cpu())
-                        if action_grad is not None
-                        else float("nan")
-                    )
-                    action_norm = float(actions.norm().detach().cpu())
-                    first_action_norm = float(actions[0].norm().detach().cpu())
-                    print(
-                        f"[solver rollout inner {outer_index}:{inner_index}] "
-                        f"action_norm={action_norm:.4f} "
-                        f"first_action_norm={first_action_norm:.4f} "
-                        f"action_grad_norm={action_grad_norm:.4e} "
-                        f"objective={float(objective.detach().cpu()):.4f} "
-                        f"augmented={float(augmented.detach().cpu()):.4f}"
-                    )
-                if (
-                    self.config.diagnostic_grad_norms
-                    and self.config.diagnostic_inner_interval is not None
-                    and (
-                        inner_index % self.config.diagnostic_inner_interval == 0
-                        or inner_index == self.config.inner_steps - 1
-                    )
-                ):
-                    a_grad = action_parameter.grad
-                    if action_parameter.grad is not None:
-                        print("action_grad_norm:", float(action_parameter.grad.norm().detach().cpu()))
-                    else:
-                        print("action_grad_norm: None")
-                    a_norm = float(a_grad.norm().cpu()) if a_grad is not None else float("nan")
-                    if latent_parameter is not None and latent_parameter.grad is not None:
-                        l_grad = latent_parameter.grad
-                        l_norm = float(l_grad.norm().cpu())
-                        l_mean_abs = float(l_grad.abs().mean().cpu())
-                    else:
-                        l_norm = float("nan")
-                        l_mean_abs = float("nan")
-                    print(
-                        f"[grad outer {outer_index} inner {inner_index}] "
-                        f"action_grad_norm={a_norm:.4e} "
-                        f"latent_grad_norm={l_norm:.4e} "
-                        f"latent_grad_mean_abs={l_mean_abs:.4e}"
-                    )
-                """
+
                 if self.config.clip_grad_norm is not None:
-                    torch.nn.utils.clip_grad_norm_(parameters, self.config.clip_grad_norm)
-                """
-                if use_langevin:
-                    current_cost = float(augmented.detach().cpu())
+                    torch.nn.utils.clip_grad_norm_(
+                        parameters,
+                        self.config.clip_grad_norm,
+                    )
 
-                    if not torch.isfinite(augmented):
-                        print(
-                            "[langevin] non-finite cost:",
-                            "objective=", float(objective.detach().cpu()),
-                            "augmented=", current_cost,
+                if (
+                    VERBOSE_DIAGNOSTICS
+                    and inner_index % 10 == 0
+                ):
+                    print(
+                        f"[adam {outer_index}:{inner_index}] "
+                        f"cost="
+                        f"{float(augmented.detach().cpu()):.6f} "
+                        f"grad_norm="
+                        f"{float(action_parameter.grad.norm().detach().cpu()):.6e} "
+                        f"action_norm="
+                        f"{float(actions.norm().detach().cpu()):.6f}"
+                    )
+
+                optimizer.step()
+
+                if not self.config.use_action_reparameterization:
+                    with torch.no_grad():
+                        action_parameter.clamp_(
+                            min=self.world_model.action_low.to(
+                                action_parameter
+                            ),
+                            max=self.world_model.action_high.to(
+                                action_parameter
+                            ),
                         )
-                        raise RuntimeError("Non-finite Langevin objective.")
 
-                    if best_rollout_actions is None or current_cost < best_rollout_cost:
-                        best_rollout_cost = current_cost
-                        best_rollout_base_cost = float(objective.detach().cpu())
-                        best_rollout_actions = actions.detach().clone()
-                        best_rollout_latents = candidate_latents.detach().clone()
-                        best_rollout_diagnostics = {
-                            key: float(value.detach().cpu()) if torch.is_tensor(value) else float(value)
-                            for key, value in pieces.items()
-                        }
-
-                    self._langevin_action_step(action_parameter)
-                else:
-                    if self.config.clip_grad_norm is not None:
-                        torch.nn.utils.clip_grad_norm_(
-                            parameters,
-                            self.config.clip_grad_norm,
-                        )
-                    
-                    assert optimizer is not None
-                    optimizer.step()
-
-                    # ony not use_langevin added
-                    if not use_langevin and not self.config.use_action_reparameterization:
-                        with torch.no_grad():
-                            action_parameter.clamp_(
-                                min=self.world_model.action_low,
-                                max=self.world_model.action_high,
-                            )
-
-                #optimizer.step()
-
-
-                final_objective = objective.detach() # video + goal + action + action_prior
-                final_augmented = augmented.detach() # augmented = objective + feasibility_penalty
                 final_residuals = residuals.detach()
 
-                # more debug
-                pieces["base_objective"] = objective.detach()
-                pieces["total_objective"] = augmented.detach()
-                #pieces["weighted_feasibility"] = feasibility_penalty.detach()
-                pieces["dual_term"] = dual_term.detach()
-                pieces["rho_penalty"] = rho_penalty.detach()
-
-                diagnostics = {}
-                for key, value in pieces.items():
-                    if torch.is_tensor(value):
-                        diagnostics[key] = float(value.detach().cpu())
-                    else:
-                        diagnostics[key] = float(value)
-                if (
-                    self.config.diagnostic_inner_interval is not None
-                    and outer_index == self.config.outer_steps - 1
-                    and inner_index == self.config.inner_steps - 1
-                ):
-                    inner_residual_norm = residuals.reshape(residuals.shape[0], -1).norm(dim=1).mean()
-
-                    weighted_video = self.config.lambda_video * pieces["video_loss"]
-                    weighted_goal = self.config.lambda_goal * pieces["goal_loss"]
-                    weighted_action = self.config.lambda_action * pieces["action_loss"]
-                    weighted_action_prior = (
-                        self.config.lambda_action_prior * pieces["action_prior_loss"]
-                    )
-                    # diagnostic print for feasibility loss
-                    lambda_feasibility = (
-                        self.feasibility_config.lambda_feasibility
-                        if self.feasibility_config is not None and self.feasibility_config.enabled
-                        else 0.0
-                    )
-                    weighted_feasibility = lambda_feasibility * pieces["feasibility_loss"]
-
-                    print(
-                        f"\n[alm outer {outer_index} inner {inner_index}] "
-                        f"video={diagnostics['video_loss']:.4f} "
-                        f"goal={diagnostics['goal_loss']:.4f} "
-                        f"action={diagnostics['action_loss']:.2f} "
-                        f"action_prior={diagnostics['action_prior_loss']:.2f} "
-                        f"w_video={float(weighted_video.detach().cpu()):.4f} "
-                        f"w_goal={float(weighted_goal.detach().cpu()):.4f} "
-                        f"w_action={float(weighted_action.detach().cpu()):.4f} "
-                        f"w_action_prior={float(weighted_action_prior.detach().cpu()):.4f} "
-                        f"obj={float(objective.detach().cpu()):.4f} "
-                        f"dual={float(dual_term.detach().cpu()):.4f} "
-                        f"rho_pen={float(rho_penalty.detach().cpu()):.4f} "
-                        f"aug={float(augmented.detach().cpu()):.4f} "
-                        f"residual={float(inner_residual_norm.detach().cpu()):.4f} "
-                        f"rho={rho:.1f} "
-                        f"feasibility={diagnostics['feasibility_loss']:.4f} "
-                        f"w_feasibility={float(weighted_feasibility.detach().cpu()):.4f} "
-                        f"dsm={diagnostics.get('dsm_energy', 0.0):.4f} "
-                        f"transition={diagnostics.get('transition_energy', 0.0):.4f} "
-                        f"w_transition={diagnostics.get('weighted_transition_energy', 0.0):.4f} "
-                        f"dyn={diagnostics.get('dynamics_penalty', 0.0):.4f} "
-                        f"w_dyn={diagnostics.get('weighted_dynamics_penalty', 0.0):.4f} "
-                    )
-
-            with torch.no_grad():
-                # for ALM ONLY 
-                if self.config.dynamics_mode == "alm":
+            if self.config.dynamics_mode == "alm":
+                with torch.no_grad():
                     if self.config.residual_reduction == "mean":
-                        dual_scale = 1.0 / float(final_residuals[0].numel())
+                        dual_scale = (
+                            1.0
+                            / float(final_residuals[0].numel())
+                        )
                     else:
                         dual_scale = 1.0
 
-                    multipliers = multipliers + rho * dual_scale * final_residuals
-                    rho = min(rho * self.config.rho_growth, self.config.rho_max)
-
-                if self.config.diagnostic_outer:
-                    if self.config.dynamics_mode in ("alm", "soft"):
-                        outer_residual_norm = final_residuals.reshape(final_residuals.shape[0], -1).norm(dim=1).mean()
-                    else:
-                        outer_residual_norm = current_latent.new_tensor(0.0)
-                    print(
-                        f"[alm outer {outer_index} done] "
-                        f"video={diagnostics['video_loss']:.6f} "
-                        f"goal={diagnostics['goal_loss']:.6f} "
-                        f"action={diagnostics['action_loss']:.6f} "
-                        f"residual={float(outer_residual_norm.cpu()):.6f} "
-                        f"next_rho={rho:.6f}"
+                    multipliers = (
+                        multipliers
+                        + rho
+                        * dual_scale
+                        * final_residuals
                     )
-           
-        if use_langevin:
-            if best_rollout_actions is None or best_rollout_latents is None:
-                raise RuntimeError("Langevin rollout produced no valid sample.")
 
-            final_actions = best_rollout_actions
-            final_latents = best_rollout_latents
-        else:
-            final_actions = self._actions_from_parameter(action_parameter).detach()
+                    rho = min(
+                        rho * self.config.rho_growth,
+                        self.config.rho_max,
+                    )
 
-        if VERBOSE_DIAGNOSTICS and self.config.dynamics_mode == "rollout":
-            print(
-                f"[solver rollout summary] "
-                f"init_action_norm={float(initial_actions_for_debug.norm().detach().cpu()):.4f} "
-                f"final_action_norm={float(final_actions.norm().detach().cpu()):.4f} "
-                f"init_first_action_norm={float(initial_actions_for_debug[0].norm().detach().cpu()):.4f} "
-                f"final_first_action_norm={float(final_actions[0].norm().detach().cpu()):.4f} "
-                f"init_to_final_norm={float((final_actions - initial_actions_for_debug).norm().detach().cpu()):.4f}"
-            )
-        # more rollout 
-        if self.config.dynamics_mode == "rollout":
-            with torch.no_grad():
+            if self.config.diagnostic_outer:
+                if self.config.dynamics_mode in {"alm", "soft"}:
+                    outer_residual_norm = (
+                        final_residuals
+                        .reshape(final_residuals.shape[0], -1)
+                        .norm(dim=1)
+                        .mean()
+                    )
+                else:
+                    outer_residual_norm = (
+                        current_latent.new_tensor(0.0)
+                    )
+
+                print(
+                    f"[solver outer {outer_index}] "
+                    f"residual="
+                    f"{float(outer_residual_norm.cpu()):.6f} "
+                    f"next_rho={rho:.6f}"
+                )
+
+        # Re-evaluate the final parameters so the reported objective
+        # corresponds to the returned actions and latents.
+        with torch.no_grad():
+            final_actions = self._actions_from_parameter(
+                action_parameter
+            ).detach()
+
+            if self.config.dynamics_mode == "rollout":
                 final_latents = self._rollout_world_model(
                     latent_context=latent_context,
                     past_action_context=past_action_context,
                     candidate_actions=final_actions,
                 ).detach()
-        elif latent_parameter is None:
-            final_latents = initial_latents.detach()
-        else:
-            final_latents = torch.cat(
-                [current_latent.unsqueeze(0), latent_parameter.detach()],
-                dim=0,
+            elif latent_parameter is None:
+                final_latents = initial_latents.detach()
+            else:
+                final_latents = torch.cat(
+                    [
+                        current_latent.unsqueeze(0),
+                        latent_parameter.detach(),
+                    ],
+                    dim=0,
+                )
+
+            if self.config.dynamics_mode in {"alm", "soft"}:
+                final_residuals = self._dynamics_residuals(
+                    latent_context=latent_context,
+                    past_action_context=past_action_context,
+                    candidate_latents=final_latents,
+                    candidate_actions=final_actions,
+                ).detach()
+            else:
+                final_residuals = final_latents.new_zeros(
+                    (horizon,) + tuple(current_latent.shape)
+                )
+
+            final_objective_tensor, final_pieces = (
+                self._objective(
+                    latents=final_latents,
+                    actions=final_actions,
+                    goal_latent=goal_latent,
+                    video_latents=video_latents,
+                    action_prior=action_prior,
+                )
             )
 
-        if self.config.dynamics_mode in ("alm", "soft"):
-            residual_norm = final_residuals.reshape(final_residuals.shape[0], -1).norm(dim=1).mean()
-        else:
-            residual_norm = current_latent.new_tensor(0.0)
+            final_augmented_tensor = (
+                final_objective_tensor.clone()
+            )
 
-        diagnostics.update(
-            {
-                "rho": float(rho),
-                "residual_norm": float(residual_norm.cpu()),
-                "init_action_norm": float(initial_actions_for_debug.norm().detach().cpu()),
-                "final_action_norm": float(final_actions.norm().detach().cpu()),
-                "init_first_action_norm": float(
-                    initial_actions_for_debug[0].norm().detach().cpu()
-                ),
-                "final_first_action_norm": float(final_actions[0].norm().detach().cpu()),
-                "init_to_final_action_norm": float(
-                    (final_actions - initial_actions_for_debug).norm().detach().cpu()
-                ),
-            }
-        )
-        if use_langevin:
+            final_pieces.setdefault(
+                "dynamics_penalty",
+                final_objective_tensor.new_tensor(0.0),
+            )
+            final_pieces.setdefault(
+                "weighted_dynamics_penalty",
+                final_objective_tensor.new_tensor(0.0),
+            )
+            final_pieces.setdefault(
+                "feasibility_loss",
+                final_objective_tensor.new_tensor(0.0),
+            )
+            final_pieces.setdefault(
+                "weighted_feasibility",
+                final_objective_tensor.new_tensor(0.0),
+            )
+
+            if self.config.dynamics_mode == "soft":
+                final_dynamics_penalty, dynamics_pieces = (
+                    self._dynamics_penalty(final_residuals)
+                )
+                final_augmented_tensor = (
+                    final_augmented_tensor
+                    + final_dynamics_penalty
+                )
+                final_pieces.update(dynamics_pieces)
+
             if (
-                best_rollout_actions is None
-                or best_rollout_latents is None
-                or best_rollout_diagnostics is None
+                self.feasibility_config is not None
+                and self.feasibility_config.enabled
             ):
-                raise RuntimeError("Langevin rollout produced no valid sample.")
+                final_feasibility, feasibility_pieces = (
+                    self._feasibility_penalty(
+                        latent_context=latent_context,
+                        candidate_latents=final_latents,
+                        candidate_actions=final_actions,
+                    )
+                )
+                final_augmented_tensor = (
+                    final_augmented_tensor
+                    + final_feasibility
+                )
+                final_pieces.update(feasibility_pieces)
+                final_pieces["weighted_feasibility"] = (
+                    final_feasibility
+                )
 
-            final_actions = best_rollout_actions
-            final_latents = best_rollout_latents
-            final_objective = best_rollout_base_cost
-            final_augmented = best_rollout_cost
-            diagnostics = best_rollout_diagnostics
-        else:
-            final_objective = float(final_objective.cpu())
-            final_augmented = float(final_augmented.cpu())
+            final_dual_term = (
+                final_objective_tensor.new_tensor(0.0)
+            )
+            final_rho_penalty = (
+                final_objective_tensor.new_tensor(0.0)
+            )
+
+            if self.config.dynamics_mode == "alm":
+                if self.config.residual_reduction == "mean":
+                    penalty_scale = (
+                        1.0 / float(final_residuals[0].numel())
+                    )
+                else:
+                    penalty_scale = 1.0
+
+                for index in range(final_residuals.shape[0]):
+                    dual_piece = (
+                        multipliers[index]
+                        * final_residuals[index]
+                    ).sum()
+
+                    penalty_piece = (
+                        0.5
+                        * rho
+                        * penalty_scale
+                        * squared_norm(final_residuals[index])
+                    )
+
+                    final_augmented_tensor = (
+                        final_augmented_tensor
+                        + dual_piece
+                        + penalty_piece
+                    )
+                    final_dual_term = (
+                        final_dual_term + dual_piece
+                    )
+                    final_rho_penalty = (
+                        final_rho_penalty + penalty_piece
+                    )
+
+            if self.config.dynamics_mode in {"alm", "soft"}:
+                residual_norm_tensor = (
+                    final_residuals
+                    .reshape(final_residuals.shape[0], -1)
+                    .norm(dim=1)
+                    .mean()
+                )
+            else:
+                residual_norm_tensor = (
+                    current_latent.new_tensor(0.0)
+                )
+
+            diagnostics = {
+                key: (
+                    float(value.detach().cpu())
+                    if torch.is_tensor(value)
+                    else float(value)
+                )
+                for key, value in final_pieces.items()
+            }
+
+            diagnostics.update(
+                {
+                    "base_objective": float(
+                        final_objective_tensor.cpu()
+                    ),
+                    "total_objective": float(
+                        final_augmented_tensor.cpu()
+                    ),
+                    "dual_term": float(
+                        final_dual_term.cpu()
+                    ),
+                    "rho_penalty": float(
+                        final_rho_penalty.cpu()
+                    ),
+                    "rho": float(rho),
+                    "residual_norm": float(
+                        residual_norm_tensor.cpu()
+                    ),
+                    "final_action_norm": float(
+                        final_actions.norm().cpu()
+                    ),
+                    "final_first_action_norm": float(
+                        final_actions[0].norm().cpu()
+                    ),
+                }
+            )
+
+            final_objective = float(
+                final_objective_tensor.cpu()
+            )
+            final_augmented = float(
+                final_augmented_tensor.cpu()
+            )
+            residual_norm = float(
+                residual_norm_tensor.cpu()
+            )
 
         return CollocationResult(
             latents=final_latents,
             actions=final_actions,
-            objective=float(final_objective),
-            augmented_lagrangian=float(final_augmented),
-            dynamics_residual_norm=float(residual_norm),
+            objective=final_objective,
+            augmented_lagrangian=final_augmented,
+            dynamics_residual_norm=residual_norm,
             multipliers=multipliers.detach(),
             rho=rho,
             diagnostics=diagnostics,

@@ -1,9 +1,10 @@
 from dataclasses import dataclass, field
+from typing import Optional, Literal
 
-from typing import Optional
-
-from dataclasses import dataclass, field
-from typing import Optional
+from .langevin import (
+    LangevinAdamConfig,
+    MultiStartAdamConfig,
+)
 
 "Config for feasibility integration"
 @dataclass
@@ -72,6 +73,66 @@ class ALMConfig:
     lambda_anti_stillness: float = 0.0
     min_action_norm: float = 0.2
 
+@dataclass
+class ActionSearchConfig:
+    # existing_alm preserves the original solver behavior.
+    method: Literal[
+        "existing_alm",
+        "multistart_adam",
+        "langevin_adam",
+    ] = "existing_alm"
+
+    # Number of independent initial action trajectories.
+    num_starts: int = 8
+
+    # Standard deviation of perturbations around the base/warm start.
+    initialization_noise_std: float = 0.3
+
+    # Include the unchanged base/warm-start trajectory as chain zero.
+    include_base: bool = True
+
+    # Reproducibility for initialization and Langevin noise.
+    seed: int = 0
+
+    # Prevent raw parameters from saturating the tanh action transform.
+    raw_action_limit: float | None = 3.0
+
+    multistart_adam: MultiStartAdamConfig = field(
+        default_factory=MultiStartAdamConfig
+    )
+
+    langevin_adam: LangevinAdamConfig = field(
+        default_factory=LangevinAdamConfig
+    )
+
+    def __post_init__(self) -> None:
+        valid_methods = {
+            "existing_alm",
+            "multistart_adam",
+            "langevin_adam",
+        }
+
+        if self.method not in valid_methods:
+            raise ValueError(
+                f"Unknown action-search method {self.method!r}; "
+                f"expected one of {sorted(valid_methods)}."
+            )
+
+        if self.num_starts < 1:
+            raise ValueError("num_starts must be at least 1.")
+
+        if self.initialization_noise_std < 0:
+            raise ValueError(
+                "initialization_noise_std must be non-negative."
+            )
+
+        if (
+            self.raw_action_limit is not None
+            and self.raw_action_limit <= 0
+        ):
+            raise ValueError(
+                "raw_action_limit must be positive or None."
+            )
 
 
 @dataclass
@@ -107,3 +168,4 @@ class PlannerConfig:
     refinement: RefinementConfig = field(default_factory=RefinementConfig)
     feasibility: FeasibilityConfig = field(default_factory=FeasibilityConfig)
     langevin_action: LangevinActionConfig = field(default_factory=LangevinActionConfig)
+    action_search: ActionSearchConfig = field(default_factory=ActionSearchConfig)

@@ -21,7 +21,7 @@ from .dino_oracle_utils import load_oracle_episode, slice_oracle_episode
 
 
 DINO_WM_ROOT = Path(
-    os.environ.get("DINO_WM_ROOT", "/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm")
+    os.environ.get("DINO_WM_ROOT", "/home/nvzutphen/dino_wm")
 )
 if str(DINO_WM_ROOT) not in sys.path:
     sys.path.append(str(DINO_WM_ROOT))
