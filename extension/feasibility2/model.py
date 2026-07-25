@@ -4,10 +4,11 @@ Defines the learned feasibility model.
 Trains a denoising network:
     epsilon_theta(h_t, a_t, z_{t+1}^{noisy}, sigma)
 
-using DSM, then uses:
-    P_theta = ||epsilon_theta||^2
+The transformer backbone is shared by two task-specific heads:
+    - a token-wise DSM head that predicts noise
+    - a scalar energy head used for contrastive transition ranking
 
-as the feasibility penalty.
+The original DSM-derived penalty remains available for planning.
 """
 
 from __future__ import annotations
@@ -117,6 +118,12 @@ class TransformerFeasibilityModel(nn.Module):
         )
 
         self.out_proj = nn.Linear(self.model_dim, self.token_dim)
+        self.energy_head = nn.Sequential(
+            nn.LayerNorm(self.model_dim),
+            nn.Linear(self.model_dim, self.model_dim),
+            nn.GELU(),
+            nn.Linear(self.model_dim, 1),
+        )
         self.delta_query = nn.Parameter(torch.zeros(1, self.num_tokens, self.model_dim))
         self.delta_out_proj = nn.Linear(self.model_dim, self.token_dim)
 
@@ -218,14 +225,19 @@ class TransformerFeasibilityModel(nn.Module):
             self.token_dim,
         )
 
-    def forward(
+    def _encode_next_features(
         self,
         history: torch.Tensor,
         action: torch.Tensor,
-        z_next_noisy: torch.Tensor,
+        z_next: torch.Tensor,
         noise_level: torch.Tensor | float,
-    ) -> torch.Tensor:
-        history, action, z_next_noisy, single = self._batchify(history, action, z_next_noisy)
+    ) -> tuple[torch.Tensor, bool]:
+        """Encode a candidate next latent with the shared transformer."""
+        history, action, z_next, single = self._batchify(
+            history,
+            action,
+            z_next,
+        )
         batch_size = history.shape[0]
 
         sigma = self._noise_tensor(
@@ -236,7 +248,7 @@ class TransformerFeasibilityModel(nn.Module):
         )
 
         history_tokens = self.token_proj(self._history_to_tokens(history))
-        next_tokens = self.token_proj(self._latent_to_tokens(z_next_noisy))
+        next_tokens = self.token_proj(self._latent_to_tokens(z_next))
 
         action_token = self.action_proj(action).unsqueeze(1)
         sigma_token = self.sigma_embed(sigma).unsqueeze(1)
@@ -251,13 +263,55 @@ class TransformerFeasibilityModel(nn.Module):
         next_start = 2 + self.history_length * self.num_tokens
         next_end = next_start + self.num_tokens
 
-        next_out = x[:, next_start:next_end]
-        pred_tokens = self.out_proj(next_out)
+        return x[:, next_start:next_end], single
+
+    def forward(
+        self,
+        history: torch.Tensor,
+        action: torch.Tensor,
+        z_next_noisy: torch.Tensor,
+        noise_level: torch.Tensor | float,
+    ) -> torch.Tensor:
+        next_features, single = self._encode_next_features(
+            history,
+            action,
+            z_next_noisy,
+            noise_level,
+        )
+        pred_tokens = self.out_proj(next_features)
         pred = self._tokens_to_latent(pred_tokens)
 
         if single:
             pred = pred.squeeze(0)
         return pred
+
+    def energy(
+        self,
+        history: torch.Tensor,
+        action: torch.Tensor,
+        z_next: torch.Tensor,
+        noise_level: torch.Tensor | float,
+        reduction: Reduction = "none",
+    ) -> torch.Tensor:
+        """Predict one scalar contrastive energy per transition."""
+        next_features, single = self._encode_next_features(
+            history,
+            action,
+            z_next,
+            noise_level,
+        )
+        energy = self.energy_head(next_features.mean(dim=1)).squeeze(-1)
+
+        if single:
+            energy = energy.squeeze(0)
+
+        if reduction == "none":
+            return energy
+        if reduction == "sum":
+            return energy.sum()
+        if reduction == "mean":
+            return energy.mean()
+        raise ValueError(f"Unknown reduction: {reduction}")
 
     def dsm_loss(
         self,
@@ -357,7 +411,21 @@ class TransformerFeasibilityModel(nn.Module):
         cfg.pop("architecture", None)
         cfg.pop("latent_dim", None)
         model = cls(**cfg)
-        model.load_state_dict(checkpoint["model_state_dict"])
+        incompatible = model.load_state_dict(
+            checkpoint["model_state_dict"],
+            strict=False,
+        )
+        unexpected_missing = [
+            key
+            for key in incompatible.missing_keys
+            if not key.startswith("energy_head.")
+        ]
+        if unexpected_missing or incompatible.unexpected_keys:
+            raise RuntimeError(
+                "Incompatible transformer checkpoint: "
+                f"missing={unexpected_missing}, "
+                f"unexpected={incompatible.unexpected_keys}"
+            )
         model.eval()
         return model
 
@@ -561,7 +629,24 @@ def load_feasibility_model_from_checkpoint(path, map_location="cpu") -> nn.Modul
     else:
         raise ValueError(f"Unknown checkpoint architecture: {architecture}")
 
-    model.load_state_dict(checkpoint["model_state_dict"])
+    if architecture == "transformer":
+        incompatible = model.load_state_dict(
+            checkpoint["model_state_dict"],
+            strict=False,
+        )
+        unexpected_missing = [
+            key
+            for key in incompatible.missing_keys
+            if not key.startswith("energy_head.")
+        ]
+        if unexpected_missing or incompatible.unexpected_keys:
+            raise RuntimeError(
+                "Incompatible transformer checkpoint: "
+                f"missing={unexpected_missing}, "
+                f"unexpected={incompatible.unexpected_keys}"
+            )
+    else:
+        model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     return model
 

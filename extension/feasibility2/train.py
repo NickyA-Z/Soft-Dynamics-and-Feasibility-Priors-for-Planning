@@ -8,6 +8,12 @@ Supports:
 - CUDA bfloat16 autocast
 - Pinned-memory DataLoaders and non-blocking GPU transfers
 - Reduced-cost contrastive validation
+
+Checkpoint compatibility:
+The DSM head keeps the existing ``out_proj`` name, preserving its state-dict
+keys. Older transformer checkpoints have no ``energy_head`` parameters; they
+can still be loaded for DSM inference, but their newly initialized energy head
+must be trained before it is used for contrastive ranking.
 """
 
 from __future__ import annotations
@@ -105,13 +111,11 @@ def contrastive_energy_ranking_loss(
         dtype=z_next.dtype,
     ).reshape(batch_size)
 
-    sigma_all = torch.cat((sigma, sigma), dim=0)
-
-    energies = model.penalty(
+    energies = model.energy(
         torch.cat((history, history), dim=0),
         torch.cat((action, negative_action), dim=0),
         torch.cat((z_next, z_next), dim=0),
-        noise_level=sigma_all,
+        noise_level=torch.cat((sigma, sigma), dim=0),
         reduction="none",
     )
 
@@ -382,11 +386,9 @@ def train_feasibility_model(
                         history[:selected_count],
                         action[:selected_count],
                         z_next[:selected_count],
-                        #noise_level=args.noise_level,
                         margin=args.contrastive_margin,
-                        scheduler=scheduler, #added 25 juli 
-                        #neg_mode=args.contrastive_neg_mode,
-                        debug=(epoch == 1 and val_batch_index == 0),
+                        scheduler=scheduler,
+                        debug=(epoch == 1 and batch_index == 0),
                     )
 
                 contrastive_weight = args.lambda_contrastive
@@ -538,10 +540,8 @@ def train_feasibility_model(
                                 history[:selected_count],
                                 action[:selected_count],
                                 z_next[:selected_count],
-                                #noise_level=args.noise_level,
                                 margin=args.contrastive_margin,
-                                scheduler=scheduler, #added 25 juli
-                                #neg_mode=args.contrastive_neg_mode,
+                                scheduler=scheduler,
                                 debug=(epoch == 1 and val_batch_index == 0),
                             )
                         )
@@ -714,8 +714,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--contrastive-margin", type=float, default=0.1)
     parser.add_argument(
         "--contrastive-neg-mode",
-        choices=("shuffle", "wrong_action", "small_noise", "gaussian"),
-        default="shuffle",
+        choices=("wrong_action",),
+        default="wrong_action",
     )
     parser.add_argument(
         "--contrastive-fraction",
