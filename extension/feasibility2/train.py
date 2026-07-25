@@ -382,10 +382,11 @@ def train_feasibility_model(
                         history[:selected_count],
                         action[:selected_count],
                         z_next[:selected_count],
-                        noise_level=args.noise_level,
+                        #noise_level=args.noise_level,
                         margin=args.contrastive_margin,
-                        neg_mode=args.contrastive_neg_mode,
-                        debug=(epoch == 1 and batch_index == 0),
+                        scheduler=scheduler, #added 25 juli 
+                        #neg_mode=args.contrastive_neg_mode,
+                        debug=(epoch == 1 and val_batch_index == 0),
                     )
 
                 contrastive_weight = args.lambda_contrastive
@@ -537,10 +538,11 @@ def train_feasibility_model(
                                 history[:selected_count],
                                 action[:selected_count],
                                 z_next[:selected_count],
-                                noise_level=args.noise_level,
+                                #noise_level=args.noise_level,
                                 margin=args.contrastive_margin,
-                                neg_mode=args.contrastive_neg_mode,
-                                debug=(epoch == 1 and batch_index == 0),
+                                scheduler=scheduler, #added 25 juli
+                                #neg_mode=args.contrastive_neg_mode,
+                                debug=(epoch == 1 and val_batch_index == 0),
                             )
                         )
 
