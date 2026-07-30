@@ -336,6 +336,11 @@ def evaluate_episode(
     langevin_final_temperature: float,
     search_adam_steps: int,
     search_adam_learning_rate: float,
+
+    # added 30 juli
+    lambda_dsm: float,
+    lambda_contrastive_plan: float,
+
     diagnostic_inner_interval: int | None = None,
     diagnostic_outer: bool = False,
     model=None,
@@ -343,10 +348,6 @@ def evaluate_episode(
     device=None,
     debug_dynamics_action_discrimination_flag: bool = False,
     feasibility_enabled: bool = True, #also new added 19 may
-
-    # added 30 juli
-    lambda_dsm: float,
-    lambda_contrastive_plan: float,
 
 ) -> dict:
     if device is None:
@@ -1039,7 +1040,7 @@ def parse_args():
 
     parser.add_argument(
         "--action-search",
-        choices=("multistart_adam", "langevin_adam"),
+        choices=("multistart_adam", "langevin_adam", "existing_alm"),
         default="multistart_adam",
     )
     parser.add_argument("--num-search-chains", type=int, default=8)
