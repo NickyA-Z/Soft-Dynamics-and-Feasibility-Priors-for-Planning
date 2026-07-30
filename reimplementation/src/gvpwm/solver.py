@@ -321,35 +321,29 @@ class LatentCollocationSolver:
             history_window = torch.cat([history, candidate_latents[1 : index + 1]], dim=0)[
                 -self.world_model.history_length :
             ]
-            total_penalty = total_penalty + self.feasibility_model.penalty(
+            dsm_penalty = self.feasibility_model.penalty(
                 history=history_window, #.reshape(self.world_model.history_length, -1),
                 action=candidate_actions[index],
                 z_next=candidate_latents[index + 1], #.reshape(-1), #z_noisy 
                 noise_level=noise_level,
                 reduction="mean",
             )
+            total_penalty = total_penalty + (
+                self.config_feasibility.lambda_dsm * dsm_penalty
+            )
 
-            # Contrastive penalty (NEW, optional)
             if self.config_feasibility.lambda_contrastive_plan > 0:
-                #total_penalty = candidate_latents.new_tensor(0.0)
-                anchor_emb = self.feasibility_model.get_embedding(
-                    history=history_window.reshape(self.world_model.history_length, -1),
-                    action=candidate_actions[index],
-                    z_noisy=candidate_latents[index + 1].reshape(-1),
-                    noise_level=noise_level,
-                )
-                # Distance to "typical infeasible region" (e.g., mean of training negatives)
-                # This is a placeholder; you'd cache reference embeddings during init
-                if not hasattr(self.feasibility_model, "mean_infeasible_embedding"):
+                if not hasattr(self.feasibility_model, "energy"):
                     raise ValueError(
-                        "lambda_contrastive_plan is enabled, but the feasibility model "
-                        "does not define mean_infeasible_embedding."
+                        "lambda_contrastive_plan is enabled, but the "
+                        "feasibility model has no scalar energy head."
                     )
-
-                ref_embedding = self.feasibility_model.mean_infeasible_embedding
-                contrastive_penalty = torch.nn.functional.cosine_similarity(
-                    anchor_emb.unsqueeze(0),
-                    ref_embedding.unsqueeze(0),
+                contrastive_penalty = self.feasibility_model.energy(
+                    history=history_window,
+                    action=candidate_actions[index],
+                    z_next=candidate_latents[index + 1],
+                    noise_level=noise_level,
+                    reduction="mean",
                 )
                 total_penalty = total_penalty + (
                     self.config_feasibility.lambda_contrastive_plan * contrastive_penalty

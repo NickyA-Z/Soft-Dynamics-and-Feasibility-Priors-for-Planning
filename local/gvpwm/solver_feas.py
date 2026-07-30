@@ -413,6 +413,8 @@ class LatentCollocationSolver:
             return zero, {
                 "feasibility_loss": zero,
                 "dsm_energy": zero,
+                "contrastive_energy": zero,
+                "weighted_contrastive_energy": zero,
                 "transition_energy": zero,
                 "weighted_transition_energy": zero,
                 "lambda_transition": 0.0,
@@ -427,6 +429,10 @@ class LatentCollocationSolver:
             noise_level=self.feasibility_config.noise_level,
 
             reduction=self.feasibility_config.reduction,
+            lambda_dsm=self.feasibility_config.lambda_dsm,
+            lambda_contrastive_plan=(
+                self.feasibility_config.lambda_contrastive_plan
+            ),
             lambda_transition=self.feasibility_config.lambda_transition,
             lambda_action_consistency=self.feasibility_config.lambda_action_consistency,
             action_consistency_margin=self.feasibility_config.action_consistency_margin,

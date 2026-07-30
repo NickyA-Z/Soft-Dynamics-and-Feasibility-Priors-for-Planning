@@ -107,6 +107,8 @@ def build_planner(
     min_action_norm: float,
     feasibility_enabled: bool,
     lambda_feasibility: float,
+    lambda_dsm: float,
+    lambda_contrastive_plan: float,
     lambda_transition: float,
     lambda_action_consistency: float,
 
@@ -173,6 +175,8 @@ def build_planner(
                 checkpoint_path=feasibility_checkpoint,  # Path to transformer_sigma_delta.pt or another feasibility checkpoint.
 
                 lambda_feasibility=lambda_feasibility,  # Outer weight on total feasibility loss in solver objective.
+                lambda_dsm=lambda_dsm,
+                lambda_contrastive_plan=lambda_contrastive_plan,
                 noise_level=0.2,  # Sigma/noise level used when evaluating DSM/noise energy.
                 reduction="mean",  # Reduction style for feasibility score, usually mean over horizon.
                 latent_reduction="mean",  # How to reduce predicted noise over latent dimensions, if supported by the model. "mean" or "max".
@@ -250,6 +254,8 @@ def evaluate_episode(
     lambda_anti_stillness: float,
     min_action_norm: float,
     lambda_feasibility: float,
+    lambda_dsm: float,
+    lambda_contrastive_plan: float,
     lambda_transition: float,
     lambda_action_consistency: float,
 
@@ -325,6 +331,8 @@ def evaluate_episode(
         min_action_norm=min_action_norm,
         feasibility_enabled=feasibility_enabled,
         lambda_feasibility=lambda_feasibility,
+        lambda_dsm=lambda_dsm,
+        lambda_contrastive_plan=lambda_contrastive_plan,
         lambda_transition=lambda_transition,
         lambda_action_consistency=lambda_action_consistency,
     )
@@ -917,6 +925,8 @@ def parse_args():
     parser.add_argument("--min-action-norm", type=float, default=0.2, help="Minimum action norm for anti-stillness term (only relevant if lambda_anti_stillness > 0)")      
     parser.add_argument("--feasibility-enabled", type=str_to_bool, default=True)
     parser.add_argument("--lambda-feasibility", type=float, default=1.0, help="Outer weight on feasibility penalty in ALM objective")
+    parser.add_argument("--lambda-dsm", type=float, default=1.0, help="DSM-head weight inside the feasibility penalty")
+    parser.add_argument("--lambda-contrastive-plan", type=float, default=0.0, help="Scalar contrastive energy-head weight inside the feasibility penalty")
     parser.add_argument("--lambda-transition", type=float, default=0.0, help="Weight on transition-consistency term inside feasibility model, if supported by the checkpoint/model")
     parser.add_argument("--lambda-action-consistency", type=float, default=0.0, help="Weight on action-consistency term inside feasibility model; 0 disables it")
 
@@ -980,6 +990,8 @@ def main():
                     min_action_norm=args.min_action_norm,
                     feasibility_enabled=args.feasibility_enabled,
                     lambda_feasibility=args.lambda_feasibility,
+                    lambda_dsm=args.lambda_dsm,
+                    lambda_contrastive_plan=args.lambda_contrastive_plan,
                     lambda_transition=args.lambda_transition,
                     lambda_action_consistency=args.lambda_action_consistency,
                 )

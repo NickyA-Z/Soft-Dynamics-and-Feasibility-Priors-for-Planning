@@ -62,6 +62,7 @@ class FeasibilityConfig:
     diagnostic_only: bool = False
     use_in_refinement: bool = False
     lambda_feasibility: float = 1.0
+    lambda_dsm: float = 1.0
     hidden_dim: int = 256
     num_layers: int = 3
     use_layer_norm: bool = False
@@ -80,7 +81,7 @@ class FeasibilityConfig:
 
     # NEW: Contrastive learning
     lambda_contrastive_train: float = 0.0  # 0 = disabled, >0 = weight in training
-    lambda_contrastive_plan: float = 0.0   # 0 = disabled, >0 = weight at planning time
+    lambda_contrastive_plan: float = 0.0   # scalar energy-head weight at planning time
     contrastive_dim: int = 128
 
 

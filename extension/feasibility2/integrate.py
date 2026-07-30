@@ -221,6 +221,8 @@ def score_trajectory_feasibility(
     noise_level: float = 0.2,
 
     reduction: str = "mean",
+    lambda_dsm: float = 1.0,
+    lambda_contrastive_plan: float = 0.0,
     lambda_transition: float = 10.0,
     lambda_action_consistency: float = 0.0,
     action_consistency_margin: float = 0.1,
@@ -257,6 +259,8 @@ def score_trajectory_feasibility(
 
     energies = []
     dsm_energies = []
+    contrastive_energies = []
+    weighted_contrastive_energies = []
     transition_energies = []
     weighted_transition_energies = []
     action_consistency_energies = []
@@ -292,6 +296,21 @@ def score_trajectory_feasibility(
             reduction="mean",
         )
 
+        contrastive_energy = history.new_tensor(0.0)
+        if lambda_contrastive_plan > 0:
+            if not hasattr(feasibility_model, "energy"):
+                raise ValueError(
+                    "lambda_contrastive_plan is enabled, but the feasibility "
+                    "model does not define a scalar energy head."
+                )
+            contrastive_energy = feasibility_model.energy(
+                history,
+                action,
+                z_next,
+                noise_level=noise_level,
+                reduction="mean",
+            )
+
         action_consistency_penalty = history.new_tensor(0.0)
 
         if lambda_action_consistency > 0:
@@ -321,13 +340,23 @@ def score_trajectory_feasibility(
 
         # look into weighted transition scales
         weighted_transition = lambda_transition * transition_energy
+        weighted_contrastive = (
+            lambda_contrastive_plan * contrastive_energy
+        )
         weighted_action_consistency = (
             lambda_action_consistency * action_consistency_penalty
         )
 
-        energy = dsm_energy + weighted_action_consistency + weighted_transition
+        energy = (
+            lambda_dsm * dsm_energy
+            + weighted_contrastive
+            + weighted_action_consistency
+            + weighted_transition
+        )
 
         dsm_energies.append(dsm_energy)
+        contrastive_energies.append(contrastive_energy)
+        weighted_contrastive_energies.append(weighted_contrastive)
         transition_energies.append(transition_energy)
         weighted_transition_energies.append(weighted_transition)
         action_consistency_energies.append(weighted_action_consistency)
@@ -361,10 +390,16 @@ def score_trajectory_feasibility(
 
     diagnostics = {
         "dsm_energy": torch.stack(dsm_energies).mean().detach(),
+        "contrastive_energy": torch.stack(contrastive_energies).mean().detach(),
+        "weighted_contrastive_energy": torch.stack(
+            weighted_contrastive_energies
+        ).mean().detach(),
         "transition_energy": torch.stack(transition_energies).mean().detach(),
         "weighted_transition_energy": torch.stack(weighted_transition_energies).mean().detach(),
         "action_consistency_energy": torch.stack(action_consistency_energies).mean().detach(),
         "lambda_transition": lambda_transition,
+        "lambda_dsm": lambda_dsm,
+        "lambda_contrastive_plan": lambda_contrastive_plan,
         "lambda_action_consistency": lambda_action_consistency,
     }
 

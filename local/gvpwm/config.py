@@ -23,6 +23,7 @@ class FeasibilityConfig:
     enabled: bool = True 
     checkpoint_path: Optional[str] = None
     lambda_feasibility: float = 1.0 # start from raw logs, <1, decrease feasibility influence. >1 increase feasibility influece
+    lambda_dsm: float = 1.0
     noise_level: float = 0.2 # best out of testing?? 
     reduction: str = "mean"
     latent_reduction: str = "mean"
@@ -34,7 +35,7 @@ class FeasibilityConfig:
 
     # NEW: Contrastive learning
     lambda_contrastive_train: float = 0.0  # 0 = disabled, >0 = weight in training
-    lambda_contrastive_plan: float = 0.0   # 0 = disabled, >0 = weight at planning time
+    lambda_contrastive_plan: float = 0.0   # scalar energy-head weight at planning time
     contrastive_dim: int = 128
 
 @dataclass
