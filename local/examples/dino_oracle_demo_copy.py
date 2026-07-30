@@ -208,6 +208,9 @@ def build_planner(
                 lambda_transition=lambda_transition,  # {22749227:1}Weight inside feasibility: action-conditioned delta transition penalty.
                 lambda_action_consistency=lambda_action_consistency,  # Optional zero-action comparison term. 0 disables it.
                 action_consistency_margin=0.1,  # Margin for action-consistency term if enabled.
+
+                lambda_dsm=lambda_dsm,
+                lambda_contrastive_plan=lambda_contrastive_plan,
             ),
             langevin_action=LangevinActionConfig(
                         enabled=False,  #dynamics_mode == "rollout",
@@ -1037,6 +1040,9 @@ def parse_args():
     parser.add_argument("--langevin-final-temperature", type=float, default=1e-6)
     parser.add_argument("--search-adam-steps", type=int, default=35)
     parser.add_argument("--search-adam-learning-rate", type=float, default=1e-2)
+
+    parser.add_argument("--lambda-dsm", type=float, default=1.0, help="DSM-head weight inside the feasibility penalty")
+    parser.add_argument("--lambda-contrastive-plan", type=float, default=0.0, help="Scalar contrastive energy-head weight inside the feasibility penalty")
 
     return parser.parse_args()
 

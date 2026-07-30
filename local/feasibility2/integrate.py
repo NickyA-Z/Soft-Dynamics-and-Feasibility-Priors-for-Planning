@@ -11,7 +11,10 @@ if str(DINO_WM_ROOT) not in sys.path:
 from datasets.pusht_dset import ACTION_MEAN, ACTION_STD
 
 from local.feasibility2 import model
-from local.feasibility2.model import load_feasibility_model_from_checkpoint
+#from local.feasibility2.model import load_feasibility_model_from_checkpoint
+from extension.feasibility2.model import (
+    load_feasibility_model_from_checkpoint,
+)
 
 "File to make feasibility model integrate with solver & planner"
 
