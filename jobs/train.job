@@ -4,14 +4,16 @@
 #SBATCH --job-name=train_feas_pusht
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --time=00:15:00
+#SBATCH --time=02:00:00
 #SBATCH --output=/home/nvzutphen/logs/train_feas_pusht_%j.out
 #SBATCH --error=/home/nvzutphen/logs/train_feas_pusht_%j.err
 
 set -euo pipefail
 
-echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
-nvidia-smi
+cd "$HOME"
+
+mkdir -p logs
+mkdir -p checkpoints/feasibility_pusht
 
 module purge
 module load 2025
@@ -19,66 +21,63 @@ module load Anaconda3/2025.06-1
 
 export CONDA_PREFIX="$HOME/.conda/envs/dl2_new"
 export PATH="$CONDA_PREFIX/bin:$PATH"
-cd "$HOME"
-
-export PYTHON="$CONDA_PREFIX/bin/python"
 export PYTHONPATH="$HOME:$HOME/dino_wm:${PYTHONPATH:-}"
-export WANDB_MODE=disabled
 
-export RUN_NAME="dsmN_contrastive_0.5_1"
-export DATAPATH="$HOME/data/feasibility_train_pusht_0_499.pt"
-export CKPT_DIR="$HOME/checkpoints/feasibility_pusht"
-export CKPT="$CKPT_DIR/${RUN_NAME}.pt"
-export EPOCHS=1
+PYTHON="$CONDA_PREFIX/bin/python"
 
-mkdir -p "$CKPT_DIR"
+DATAPATH="$HOME/data/feasibility_train_pusht_0_499.pt"
+CKPT="$HOME/checkpoints/feasibility_pusht/plain_dsm_full.pt"
 
-echo "===== Training: $RUN_NAME ====="
-echo "CONDA_PREFIX=$CONDA_PREFIX"
-echo "Python: $PYTHON"
-echo "which python: $(which python)"
-$PYTHON -c "import sys; print(sys.executable)"
-$PYTHON -c "import torch, psutil, wandb, submitit, gym, hydra; print('core imports ok')"
-$PYTHON -c "import torch; print(torch.__version__, torch.version.cuda)"
-echo "Dataset: $DATAPATH"
-echo "Checkpoint: $CKPT"
-echo "Epochs: $EPOCHS"
+echo "===== Environment ====="
+echo "Host: $(hostname)"
 echo "Working directory: $(pwd)"
-echo "PYTHONPATH=$PYTHONPATH"
+echo "Python: $PYTHON"
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
+echo "SLURM_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK:-unset}"
 
-test -f "$DATAPATH"
+echo
+echo "===== GPU allocation ====="
+nvidia-smi
 
-$PYTHON - <<'PY'
+echo
+echo "===== PyTorch CUDA check ====="
+"$PYTHON" - <<'PY'
+import sys
 import torch
 
 print("PyTorch:", torch.__version__)
-print("CUDA build:", torch.version.cuda)
+print("PyTorch CUDA build:", torch.version.cuda)
 print("CUDA available:", torch.cuda.is_available())
 print("GPU count:", torch.cuda.device_count())
 
-if torch.cuda.is_available():
-    print("GPU:", torch.cuda.get_device_name(0))
+if not torch.cuda.is_available():
+    sys.exit("ERROR: CUDA unavailable; refusing to train on CPU.")
+
+print("GPU:", torch.cuda.get_device_name(0))
 PY
 
-/usr/bin/time -p $PYTHON -u -m extension.feasibility2.train \
-  --dataset "$DATAPATH" \
-  --checkpoint-out "$CKPT" \
-  --epochs "$EPOCHS" \
-  --batch-size 32 \
-  --lr 1e-4 \
-  --model-dim 256 \
-  --num-layers 4 \
-  --num-heads 4 \
-  --sigma-min 0.05 \
-  --sigma-max 0.5 \
-  --noise-level 0.05 \
-  --lambda-delta 0 \
-  --lambda-contrastive 0.5 \
-  --contrastive-neg-mode wrong_action \
-  --contrastive-fraction 0.5 \
-  --contrastive-every 1 \
-  --max-val-samples 128 \
-  --contrastive-val-batches 1 \
-  --contrastive-val-every 1 \
-  --num-workers 2 \
-  --profile-batches 10
+echo
+echo "===== Training ====="
+echo "Dataset: $DATAPATH"
+echo "Checkpoint: $CKPT"
+
+"$PYTHON" -u -m extension.feasibility2.train \
+    --dataset "$DATAPATH" \
+    --checkpoint-out "$CKPT" \
+    --epochs 150 \
+    --batch-size 64 \
+    --lr 1e-4 \
+    --model-dim 256 \
+    --num-layers 4 \
+    --num-heads 4 \
+    --sigma-min 0.05 \
+    --sigma-max 0.5 \
+    --noise-level 0.05 \
+    --lambda-delta 0 \
+    --lambda-contrastive 0.0 \
+    --val-fraction 0.1 \
+    --max-val-samples 0 \
+    --num-workers 2 \
+    --weight-decay 0.0 \
+    --val-fraction 0.1 \
+    --device cuda

@@ -387,7 +387,8 @@ def train_feasibility_model(
                         action[:selected_count],
                         z_next[:selected_count],
                         margin=args.contrastive_margin,
-                        scheduler=scheduler,
+                        scheduler=scheduler, #added 25 juli 
+                        #neg_mode=args.contrastive_neg_mode,
                         debug=(epoch == 1 and batch_index == 0),
                     )
 

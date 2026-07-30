@@ -33,7 +33,6 @@ import torch.nn.functional as F
 from local.gvpwm.losses import scale_invariant_alignment
 
 
-
 DINO_WM_ROOT = Path("/home/nvzutphen/dino_wm")
 if str(DINO_WM_ROOT) not in sys.path:
     sys.path.append(str(DINO_WM_ROOT))
@@ -127,6 +126,17 @@ def build_planner(
     lambda_action_consistency: float,
 
     action_search: str, # search for langevin or multistart_adam
+    num_search_chains: int,
+    search_seed: int,
+    initialization_noise_std: float,
+    raw_action_limit: float,
+    langevin_steps: int,
+    langevin_initial_step_size: float,
+    langevin_final_step_size: float,
+    langevin_initial_temperature: float,
+    langevin_final_temperature: float,
+    search_adam_steps: int,
+    search_adam_learning_rate: float,
 
     # added 21 may
     lambda_action: float,
@@ -211,8 +221,25 @@ def build_planner(
             ),
             action_search=ActionSearchConfig(
                 method=action_search,
-                num_starts=8,
-                seed=0,
+                num_starts=num_search_chains,
+                initialization_noise_std=initialization_noise_std,
+                seed=search_seed,
+                raw_action_limit=raw_action_limit,
+                multistart_adam=MultiStartAdamConfig(
+                    steps=search_adam_steps,
+                    learning_rate=search_adam_learning_rate,
+                    raw_action_limit=raw_action_limit,
+                ),
+                langevin_adam=LangevinAdamConfig(
+                    langevin_steps=langevin_steps,
+                    adam_steps=search_adam_steps,
+                    initial_step_size=langevin_initial_step_size,
+                    final_step_size=langevin_final_step_size,
+                    initial_temperature=langevin_initial_temperature,
+                    final_temperature=langevin_final_temperature,
+                    adam_learning_rate=search_adam_learning_rate,
+                    raw_action_limit=raw_action_limit,
+                ),
             ),
         ),
     )
@@ -291,6 +318,17 @@ def evaluate_episode(
     horizon: int,
     feasibility_checkpoint: str, # same make model an arg
     action_search: str, # 14 juli 
+    num_search_chains: int,
+    search_seed: int,
+    initialization_noise_std: float,
+    raw_action_limit: float,
+    langevin_steps: int,
+    langevin_initial_step_size: float,
+    langevin_final_step_size: float,
+    langevin_initial_temperature: float,
+    langevin_final_temperature: float,
+    search_adam_steps: int,
+    search_adam_learning_rate: float,
     diagnostic_inner_interval: int | None = None,
     diagnostic_outer: bool = False,
     model=None,
@@ -367,6 +405,17 @@ def evaluate_episode(
         lambda_action=lambda_action,
 
         action_search=action_search, # added 14 juli
+        num_search_chains=num_search_chains,
+        search_seed=search_seed,
+        initialization_noise_std=initialization_noise_std,
+        raw_action_limit=raw_action_limit,
+        langevin_steps=langevin_steps,
+        langevin_initial_step_size=langevin_initial_step_size,
+        langevin_final_step_size=langevin_final_step_size,
+        langevin_initial_temperature=langevin_initial_temperature,
+        langevin_final_temperature=langevin_final_temperature,
+        search_adam_steps=search_adam_steps,
+        search_adam_learning_rate=search_adam_learning_rate,
     )
     print("\nPlanner configuration:")
     print(planner.config)
@@ -979,6 +1028,15 @@ def parse_args():
     )
     parser.add_argument("--num-search-chains", type=int, default=8)
     parser.add_argument("--search-seed", type=int, default=0)
+    parser.add_argument("--initialization-noise-std", type=float, default=0.3)
+    parser.add_argument("--raw-action-limit", type=float, default=3.0)
+    parser.add_argument("--langevin-steps", type=int, default=15)
+    parser.add_argument("--langevin-initial-step-size", type=float, default=3e-3)
+    parser.add_argument("--langevin-final-step-size", type=float, default=3e-4)
+    parser.add_argument("--langevin-initial-temperature", type=float, default=1e-3)
+    parser.add_argument("--langevin-final-temperature", type=float, default=1e-6)
+    parser.add_argument("--search-adam-steps", type=int, default=35)
+    parser.add_argument("--search-adam-learning-rate", type=float, default=1e-2)
 
     return parser.parse_args()
 
@@ -1038,6 +1096,17 @@ def main():
                     lambda_action=args.lambda_action,
 
                     action_search=args.action_search,  # 14 juli 
+                    num_search_chains=args.num_search_chains,
+                    search_seed=args.search_seed,
+                    initialization_noise_std=args.initialization_noise_std,
+                    raw_action_limit=args.raw_action_limit,
+                    langevin_steps=args.langevin_steps,
+                    langevin_initial_step_size=args.langevin_initial_step_size,
+                    langevin_final_step_size=args.langevin_final_step_size,
+                    langevin_initial_temperature=args.langevin_initial_temperature,
+                    langevin_final_temperature=args.langevin_final_temperature,
+                    search_adam_steps=args.search_adam_steps,
+                    search_adam_learning_rate=args.search_adam_learning_rate,
                 )
             )
         except Exception as exc:

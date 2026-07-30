@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 import os
 
 import torch
@@ -22,11 +23,13 @@ from local.gvpwm.langevin import (
 
 VERBOSE_DIAGNOSTICS = os.environ.get("WALL_VERBOSE_DIAGNOSTICS", "0") == "1"
 
+
 class LatentCollocationSolver:
     def __init__(self, world_model: WorldModelAdapter, config: ALMConfig,
                  feasibility_config: FeasibilityConfig | None = None, # feasibility integration
                  feasibility_model: nn.Module | None = None, # feasibility integration
                  langevin_config: LangevinActionConfig | None = None, # langevin integration 
+                 action_search_config: ActionSearchConfig | None = None,
                  ) -> None:
         self.world_model = world_model
         self.config = config
@@ -59,6 +62,58 @@ class LatentCollocationSolver:
         scaled = 2.0 * (actions - low) / (high - low).clamp_min(1e-8) - 1.0
         scaled = scaled.clamp(-0.999999, 0.999999)
         return torch.atanh(scaled)
+
+    def _evaluate_rollout_actions(
+        self,
+        raw_actions: torch.Tensor,
+        *,
+        latent_context: torch.Tensor,
+        past_action_context: torch.Tensor,
+        goal_latent: torch.Tensor,
+        video_latents: torch.Tensor,
+        action_prior: torch.Tensor | None,
+    ) -> ActionEvaluation:
+        """Evaluate raw actions through the differentiable rollout pipeline."""
+        actions = self._actions_from_parameter(raw_actions)
+        latents = self._rollout_world_model(
+            latent_context=latent_context,
+            past_action_context=past_action_context,
+            candidate_actions=actions,
+        )
+
+        objective, pieces = self._objective(
+            latents=latents,
+            actions=actions,
+            goal_latent=goal_latent,
+            video_latents=video_latents,
+            action_prior=action_prior,
+        )
+        feasibility, feasibility_pieces = self._feasibility_penalty(
+            latent_context=latent_context,
+            candidate_latents=latents,
+            candidate_actions=actions,
+        )
+        total_loss = objective + feasibility
+
+        pieces.update(feasibility_pieces)
+        pieces["base_objective"] = objective
+        pieces["weighted_feasibility"] = feasibility
+        pieces["total_objective"] = total_loss
+        diagnostics = {
+            key: (
+                float(value.detach().cpu())
+                if torch.is_tensor(value)
+                else float(value)
+            )
+            for key, value in pieces.items()
+        }
+
+        return ActionEvaluation(
+            loss=total_loss,
+            actions=actions,
+            latents=latents,
+            diagnostics=diagnostics,
+        )
 
     def _initialize_latents(
         self,
@@ -514,14 +569,17 @@ class LatentCollocationSolver:
                     "dynamics_mode='rollout'."
                 )
 
+            generator = torch.Generator(device=base_parameter.device)
+            generator.manual_seed(self.action_search_config.seed)
             initial_parameters = make_initial_action_parameters(
                 base_parameter=base_parameter,
                 num_starts=self.action_search_config.num_starts,
                 noise_std=(
                     self.action_search_config.initialization_noise_std
                 ),
-                include_base=True,
-                raw_action_limit=3.0,
+                include_base=self.action_search_config.include_base,
+                raw_action_limit=self.action_search_config.raw_action_limit,
+                generator=generator,
             )
 
             print(
@@ -529,8 +587,8 @@ class LatentCollocationSolver:
                 f"chains={len(initial_parameters)}"
             )
 
-            evaluator = RolloutActionEvaluator(
-                solver=self,
+            evaluator = partial(
+                self._evaluate_rollout_actions,
                 latent_context=latent_context,
                 past_action_context=past_action_context,
                 goal_latent=goal_latent,
@@ -549,6 +607,7 @@ class LatentCollocationSolver:
                     initial_parameters=initial_parameters,
                     evaluate_actions=evaluator,
                     config=self.action_search_config.langevin_adam,
+                    generator=generator,
                 )
 
             residuals = torch.zeros(

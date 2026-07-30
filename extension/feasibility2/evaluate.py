@@ -364,6 +364,110 @@ def evaluate_action_conversion(dataset, metadata) -> dict[str, float]:
         "raw_action_max_global": float(raw_actions.max()),
     }
 
+# eval con
+@torch.no_grad()
+def evaluate_contrastive_energy(
+    model,
+    dataset,
+    batch_size: int = 256,
+    noise_level: float = 0.2,
+    margin: float = 0.1,
+    device: str | torch.device | None = None,
+) -> dict[str, float]:
+    """Evaluate the scalar energy head on wrong-action negatives.
+
+    Positive:
+        E(history, expert_action, z_next)
+
+    Negative:
+        E(history, wrong_action, z_next)
+
+    Lower energy is expected for the positive transition.
+    """
+    if not hasattr(model, "energy"):
+        raise ValueError(
+            "This model has no scalar energy head. "
+            "Load a two-head transformer checkpoint."
+        )
+
+    device = torch.device(
+        device or next(model.parameters()).device
+    )
+    model = model.to(device).eval()
+
+    if noise_level is None:
+        noise_level = 0.2
+
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+    )
+
+    positive_energies = []
+    negative_energies = []
+
+    for batch in loader:
+        if len(batch) == 4:
+            history, action, z_next, _ = batch
+        else:
+            history, action, z_next = batch
+
+        history = history.to(device)
+        action = action.to(device)
+        z_next = z_next.to(device)
+
+        # A singleton batch cannot provide a different in-batch action.
+        if action.shape[0] < 2:
+            continue
+
+        # This matches the wrong-action construction used during training.
+        wrong_action = action.roll(shifts=1, dims=0)
+
+        sigma = torch.full(
+            (action.shape[0],),
+            float(noise_level),
+            device=device,
+            dtype=z_next.dtype,
+        )
+
+        # Evaluate positive and negative examples together, matching training.
+        energies = model.energy(
+            torch.cat((history, history), dim=0),
+            torch.cat((action, wrong_action), dim=0),
+            torch.cat((z_next, z_next), dim=0),
+            noise_level=torch.cat((sigma, sigma), dim=0),
+            reduction="none",
+        )
+
+        positive, negative = energies.chunk(2, dim=0)
+
+        positive_energies.append(positive.cpu())
+        negative_energies.append(negative.cpu())
+
+    if not positive_energies:
+        raise ValueError(
+            "No contrastive pairs were available for evaluation."
+        )
+
+    positive = torch.cat(positive_energies)
+    negative = torch.cat(negative_energies)
+    gap = negative - positive
+
+    return {
+        "positive_energy_mean": float(positive.mean()),
+        "positive_energy_median": float(positive.median()),
+        "negative_energy_mean": float(negative.mean()),
+        "negative_energy_median": float(negative.median()),
+        "energy_gap_mean_negative_minus_positive": float(gap.mean()),
+        "energy_gap_median_negative_minus_positive": float(gap.median()),
+        "ranking_accuracy": float((gap > 0).float().mean()),
+        "margin_accuracy": float((gap > margin).float().mean()),
+        "pairwise_hinge_loss": float(
+            torch.relu(margin - gap).mean()
+        ),
+        "num_pairs": int(gap.numel()),
+    }
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Evaluate learned feasibility energies.")
@@ -374,12 +478,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device", default=None)
     p.add_argument("--random-mode", choices=["shuffle", "gaussian", "small_noise"], default="shuffle")
 
-    p.add_argument("--eval-mode", choices=["expert_vs_random", "action", "both"], default="expert_vs_random")
+    p.add_argument("--eval-mode", choices=["expert_vs_random", "action","contrastive", "both", "all"], default="expert_vs_random")
     p.add_argument("--gaussian-action-std", type=float, default=1.0)
     p.add_argument(
         "--check-action-conversion",
         action="store_true",
         help="Print normalized and reconstructed raw action statistics.",
+    )
+    p.add_argument(
+        "--contrastive-margin",
+        type=float,
+        default=0.1,
     )
 
     return p.parse_args()
@@ -410,7 +519,7 @@ def main() -> None:
             metrics,
         )
 
-    if args.eval_mode in ("expert_vs_random", "both"):
+    if args.eval_mode in ("expert_vs_random", "both", "all"):
         metrics = evaluate_expert_vs_random(
             model=model,
             dataset=dataset,
@@ -425,7 +534,7 @@ def main() -> None:
         )
 
         #all_metrics.update(metrics)
-    if args.eval_mode in ("action", "both"):
+    if args.eval_mode in ("action", "both", "all"):
         metrics = evaluate_action_discrimination(
             model=model,
             dataset=dataset,
@@ -438,6 +547,20 @@ def main() -> None:
             metrics,
         )
         #all_metrics.update(metrics)
+        if args.eval_mode in ("contrastive", "all"):
+            metrics = evaluate_contrastive_energy(
+                model=model,
+                dataset=dataset,
+                batch_size=args.batch_size,
+                noise_level=args.noise_level,
+                margin=args.contrastive_margin,
+                device=device,
+            )
+
+            print_metrics_section(
+                "4. CONTRASTIVE ENERGY: expert action vs wrong action",
+                metrics,
+            )
     """
     for k, v in all_metrics.items():
         print(f"{k}: {v}")
