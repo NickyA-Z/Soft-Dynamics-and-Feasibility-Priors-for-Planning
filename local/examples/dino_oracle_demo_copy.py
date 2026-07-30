@@ -140,6 +140,10 @@ def build_planner(
 
     # added 21 may
     lambda_action: float,
+    # added 30 juli
+    lambda_dsm: float,
+    lambda_contrastive_plan: float,
+
 
     diagnostic_inner_interval: int | None = None,  # Print solver diagnostics every N inner steps. None disables inner logging.
     diagnostic_outer: bool = False,  # Whether to print diagnostics after each outer solver loop.
@@ -340,6 +344,10 @@ def evaluate_episode(
     debug_dynamics_action_discrimination_flag: bool = False,
     feasibility_enabled: bool = True, #also new added 19 may
 
+    # added 30 juli
+    lambda_dsm: float,
+    lambda_contrastive_plan: float,
+
 ) -> dict:
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -419,6 +427,11 @@ def evaluate_episode(
         langevin_final_temperature=langevin_final_temperature,
         search_adam_steps=search_adam_steps,
         search_adam_learning_rate=search_adam_learning_rate,
+
+        # added 30 juli
+        lambda_dsm=lambda_dsm,
+        lambda_contrastive_plan=lambda_contrastive_plan,
+
     )
     print("\nPlanner configuration:")
     print(planner.config)
@@ -1113,6 +1126,10 @@ def main():
                     langevin_final_temperature=args.langevin_final_temperature,
                     search_adam_steps=args.search_adam_steps,
                     search_adam_learning_rate=args.search_adam_learning_rate,
+
+                    # added 30 juli
+                    lambda_dsm=args.lambda_dsm,
+                    lambda_contrastive_plan=args.lambda_contrastive_plan,
                 )
             )
         except Exception as exc:
