@@ -622,6 +622,37 @@ class LatentCollocationSolver:
                 "search_step": float(search_result.step_index),
                 "num_search_chains": float(len(initial_parameters)),
             }
+            # added 31 juli -> debug
+            expected_total = (
+                self.config.lambda_video * final_pieces["video_loss"]
+                + self.config.lambda_goal * final_pieces["goal_loss"]
+                + self.config.lambda_action * final_pieces["action_loss"]
+                + self.config.lambda_action_prior * final_pieces["action_prior_loss"]
+                + self.config.lambda_anti_stillness * final_pieces["anti_stillness_loss"]
+            )
+
+            if self.config.dynamics_mode == "soft":
+                expected_total = expected_total + final_pieces["weighted_dynamics_penalty"]
+
+            if (
+                self.feasibility_config is not None
+                and self.feasibility_config.enabled
+            ):
+                expected_total = expected_total + final_pieces["weighted_feasibility"]
+
+            print(
+                "[objective check] "
+                f"expected_total={float(expected_total.detach().cpu()):.6f} "
+                f"reported_total={float(final_augmented_tensor.detach().cpu()):.6f} "
+                f"diff={float((expected_total - final_augmented_tensor).abs().detach().cpu()):.6e} "
+                f"video={float(final_pieces['video_loss'].detach().cpu()):.6f} "
+                f"goal={float(final_pieces['goal_loss'].detach().cpu()):.6f} "
+                f"action={float(final_pieces['action_loss'].detach().cpu()):.6f} "
+                f"dyn={float(final_pieces['dynamics_penalty'].detach().cpu()):.6f} "
+                f"w_dyn={float(final_pieces['weighted_dynamics_penalty'].detach().cpu()):.6f} "
+                f"feas={float(final_pieces['feasibility_loss'].detach().cpu()):.6f} "
+                f"w_feas={float(final_pieces['weighted_feasibility'].detach().cpu()):.6f}"
+            )
 
             return CollocationResult(
                 latents=search_result.latents,

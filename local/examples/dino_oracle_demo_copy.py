@@ -300,7 +300,8 @@ def _oracle_video_alignment_loss(self, latent, reference):
     #_debug_align_counter["n"] += 1
 
     #return visual_loss + 10.0 * proprio_loss
-    return visual_loss
+    #return visual_loss
+    return visual_loss + 1.0 * proprio_loss # added 31 juli not sure about use expect that it cares more a baout action
 
 def _oracle_goal_loss(self, latent, goal_latent):
     return super(DinoWorldModelAdapter, self).goal_loss(latent, goal_latent)
@@ -974,6 +975,8 @@ def debug_rollout_objective_action_discrimination(
             f"transition={float(feasibility_pieces.get('transition_energy', torch.tensor(0.0)).detach().cpu()):.6f} "
             f"rollout_vs_video={float(rollout_vs_video.detach().cpu()):.6f} "
             f"final_vs_goal={float(final_vs_goal.detach().cpu()):.6f}"
+            f"contrastive={float(feasibility_pieces.get('contrastive_energy', torch.tensor(0.0)).detach().cpu()):.6f} "
+            f"w_contrastive={float(feasibility_pieces.get('weighted_contrastive_energy', torch.tensor(0.0)).detach().cpu()):.6f} "
         )
 
         return float(total.detach().cpu())

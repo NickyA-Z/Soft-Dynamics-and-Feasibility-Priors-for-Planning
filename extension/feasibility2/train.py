@@ -177,6 +177,22 @@ def save_checkpoint(
     path.parent.mkdir(parents=True, exist_ok=True)
     start = time.perf_counter()
 
+    # adde 31 juli 
+    sd = model.state_dict()
+
+    print("SAVE CHECK parameter count:", sum(p.numel() for p in model.parameters()))
+    print("SAVE CHECK hasattr energy_head:", hasattr(model, "energy_head"))
+    print("SAVE CHECK state_dict has energy_head:", any(k.startswith("energy_head") for k in sd))
+
+    for key, value in sd.items():
+        if key.startswith("energy_head"):
+            print("SAVE CHECK", key, tuple(value.shape))
+
+    if args.lambda_contrastive > 0.0 and not any(k.startswith("energy_head") for k in sd):
+        raise RuntimeError(
+            "lambda_contrastive > 0, but model.state_dict() has no energy_head."
+    )
+
     torch.save(
         {
             "model_state_dict": model.state_dict(),
@@ -192,6 +208,7 @@ def save_checkpoint(
             "contrastive_neg_mode": args.contrastive_neg_mode,
             "contrastive_fraction": args.contrastive_fraction,
             "contrastive_every": args.contrastive_every,
+            "model_state_dict": sd,
         },
         path,
     )
