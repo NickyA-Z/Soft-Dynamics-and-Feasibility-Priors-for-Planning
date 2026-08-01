@@ -84,50 +84,113 @@ def move_batch(
 
     return history, action, z_next, past_actions
 
-def contrastive_energy_ranking_loss(
+def contrastive_energy_loss(
     model: torch.nn.Module,
     history: torch.Tensor,
     action: torch.Tensor,
     z_next: torch.Tensor,
-    scheduler: SigmaScheduler,
-    margin: float = 0.1,
+    noise_level: float,
+    temperature: float,
+    ranking_margin: float,
+    hard_negative_weight: float,
+    calibration_margin: float,
+    calibration_weight: float,
+    num_action_shuffles: int,
+    latent_noise_scales: tuple[float, ...],
     debug: bool = False,
 ) -> torch.Tensor:
+    """Multi-negative energy objective for action and free-latent planning.
+
+    Combines InfoNCE over mixed negatives, smooth hardest-negative ranking,
+    and absolute energy calibration. Action negatives teach conditional action
+    compatibility; shuffled and perturbed next latents shape the free-latent
+    landscape used by dynamics_mode='none'.
+    """
     batch_size = history.shape[0]
 
     if batch_size < 2:
         return history.new_zeros(())
 
-    permutation = torch.roll(
-        torch.arange(batch_size, device=history.device),
-        shifts=1,
-    )
-
-    negative_action = action[permutation]
-
-    sigma = scheduler.sample_sigmas(
-        batch_size=batch_size,
-        device=z_next.device,
-        dtype=z_next.dtype,
-    ).reshape(batch_size)
-
-    energies = model.energy(
-        torch.cat((history, history), dim=0),
-        torch.cat((action, negative_action), dim=0),
-        torch.cat((z_next, z_next), dim=0),
-        noise_level=torch.cat((sigma, sigma), dim=0),
+    sigma = z_next.new_full((batch_size,), float(noise_level))
+    positive_energy = model.energy(
+        history,
+        action,
+        z_next,
+        noise_level=sigma,
         reduction="none",
     )
 
-    positive_energy, negative_energy = energies.chunk(2, dim=0)
+    negative_pairs: list[tuple[torch.Tensor, torch.Tensor]] = []
+
+    max_shuffles = min(num_action_shuffles, batch_size - 1)
+    for shift in range(1, max_shuffles + 1):
+        negative_pairs.append((action.roll(shifts=shift, dims=0), z_next))
+
+    action_std = action.std(dim=0, keepdim=True).clamp_min(1e-3)
+    negative_pairs.extend(
+        [
+            (torch.zeros_like(action), z_next),
+            (-action, z_next),
+            (torch.randn_like(action) * action_std, z_next),
+            (action, z_next.roll(shifts=1, dims=0)),
+        ]
+    )
+
+    for scale in latent_noise_scales:
+        negative_pairs.append(
+            (action, z_next + float(scale) * torch.randn_like(z_next))
+        )
+
+    negative_energies = [
+        model.energy(
+            history,
+            negative_action,
+            negative_z_next,
+            noise_level=sigma,
+            reduction="none",
+        )
+        for negative_action, negative_z_next in negative_pairs
+    ]
+    negative_energy = torch.stack(negative_energies, dim=1)
+
+    all_energies = torch.cat(
+        (positive_energy.unsqueeze(1), negative_energy),
+        dim=1,
+    )
+    logits = -all_energies / temperature
+    targets = torch.zeros(
+        batch_size,
+        device=history.device,
+        dtype=torch.long,
+    )
+    info_nce = F.cross_entropy(logits, targets)
+
+    hardest_negative = negative_energy.min(dim=1).values
+    hard_ranking = temperature * F.softplus(
+        (ranking_margin + positive_energy - hardest_negative) / temperature
+    ).mean()
+
+    calibration = (
+        F.softplus(positive_energy).mean()
+        + F.softplus(calibration_margin - negative_energy).mean()
+    )
+
+    loss = (
+        info_nce
+        + hard_negative_weight * hard_ranking
+        + calibration_weight * calibration
+    )
 
     if debug:
         stats = torch.stack(
             [
                 positive_energy.mean(),
                 negative_energy.mean(),
-                (negative_energy - positive_energy).mean(),
-                sigma.mean(),
+                (negative_energy - positive_energy.unsqueeze(1)).mean(),
+                hardest_negative.mean(),
+                info_nce,
+                hard_ranking,
+                calibration,
             ]
         ).detach().float().cpu()
 
@@ -135,12 +198,14 @@ def contrastive_energy_ranking_loss(
             f"E_pos={stats[0].item():.6f} "
             f"E_neg={stats[1].item():.6f} "
             f"gap={stats[2].item():.6f} "
-            f"sigma_mean={stats[3].item():.6f}"
+            f"E_hard={stats[3].item():.6f} "
+            f"nce={stats[4].item():.6f} "
+            f"hard={stats[5].item():.6f} "
+            f"cal={stats[6].item():.6f} "
+            f"K={negative_energy.shape[1]}"
         )
 
-    return F.relu(
-        margin + positive_energy - negative_energy
-    ).mean()
+    return loss
 
 def make_loader(
     dataset,
@@ -177,16 +242,7 @@ def save_checkpoint(
     path.parent.mkdir(parents=True, exist_ok=True)
     start = time.perf_counter()
 
-    # adde 31 juli 
     sd = model.state_dict()
-
-    print("SAVE CHECK parameter count:", sum(p.numel() for p in model.parameters()))
-    print("SAVE CHECK hasattr energy_head:", hasattr(model, "energy_head"))
-    print("SAVE CHECK state_dict has energy_head:", any(k.startswith("energy_head") for k in sd))
-
-    for key, value in sd.items():
-        if key.startswith("energy_head"):
-            print("SAVE CHECK", key, tuple(value.shape))
 
     if args.lambda_contrastive > 0.0 and not any(k.startswith("energy_head") for k in sd):
         raise RuntimeError(
@@ -195,7 +251,7 @@ def save_checkpoint(
 
     torch.save(
         {
-            "model_state_dict": model.state_dict(),
+            "model_state_dict": sd,
             "config": model.config_dict(),
             "dataset_metadata": metadata or {},
             "epoch": epoch,
@@ -205,10 +261,15 @@ def save_checkpoint(
             "delta_target_mode": args.delta_target_mode,
             "lambda_contrastive": args.lambda_contrastive,
             "contrastive_margin": args.contrastive_margin,
-            "contrastive_neg_mode": args.contrastive_neg_mode,
+            "contrastive_temperature": args.contrastive_temperature,
+            "contrastive_noise_level": args.contrastive_noise_level,
+            "contrastive_hard_weight": args.contrastive_hard_weight,
+            "contrastive_calibration_margin": args.contrastive_calibration_margin,
+            "contrastive_calibration_weight": args.contrastive_calibration_weight,
+            "contrastive_num_action_shuffles": args.contrastive_num_action_shuffles,
+            "contrastive_latent_noise_scales": args.contrastive_latent_noise_scales,
             "contrastive_fraction": args.contrastive_fraction,
             "contrastive_every": args.contrastive_every,
-            "model_state_dict": sd,
         },
         path,
     )
@@ -398,14 +459,21 @@ def train_feasibility_model(
                 )
 
                 with amp_context(device, not args.no_amp):
-                    contrastive_loss = contrastive_energy_ranking_loss(
+                    contrastive_loss = contrastive_energy_loss(
                         model,
                         history[:selected_count],
                         action[:selected_count],
                         z_next[:selected_count],
-                        margin=args.contrastive_margin,
-                        scheduler=scheduler, #added 25 juli 
-                        #neg_mode=args.contrastive_neg_mode,
+                        noise_level=args.contrastive_noise_level,
+                        temperature=args.contrastive_temperature,
+                        ranking_margin=args.contrastive_margin,
+                        hard_negative_weight=args.contrastive_hard_weight,
+                        calibration_margin=args.contrastive_calibration_margin,
+                        calibration_weight=args.contrastive_calibration_weight,
+                        num_action_shuffles=args.contrastive_num_action_shuffles,
+                        latent_noise_scales=tuple(
+                            args.contrastive_latent_noise_scales
+                        ),
                         debug=(epoch == 1 and batch_index == 0),
                     )
 
@@ -553,13 +621,21 @@ def train_feasibility_model(
 
                     with amp_context(device, not args.no_amp):
                         contrastive_loss = (
-                            contrastive_energy_ranking_loss(
+                            contrastive_energy_loss(
                                 model,
                                 history[:selected_count],
                                 action[:selected_count],
                                 z_next[:selected_count],
-                                margin=args.contrastive_margin,
-                                scheduler=scheduler,
+                                noise_level=args.contrastive_noise_level,
+                                temperature=args.contrastive_temperature,
+                                ranking_margin=args.contrastive_margin,
+                                hard_negative_weight=args.contrastive_hard_weight,
+                                calibration_margin=args.contrastive_calibration_margin,
+                                calibration_weight=args.contrastive_calibration_weight,
+                                num_action_shuffles=args.contrastive_num_action_shuffles,
+                                latent_noise_scales=tuple(
+                                    args.contrastive_latent_noise_scales
+                                ),
                                 debug=(epoch == 1 and val_batch_index == 0),
                             )
                         )
@@ -588,8 +664,15 @@ def train_feasibility_model(
             ),
         }
 
-        # Use stable, full-validation metrics for checkpoint selection.
         checkpoint_metric = val_dsm + args.lambda_delta * val_delta
+        if args.lambda_contrastive > 0.0:
+            val_contrastive = val_metrics["contrastive"]
+            checkpoint_metric = (
+                checkpoint_metric
+                + args.lambda_contrastive * val_contrastive
+                if math.isfinite(val_contrastive)
+                else math.inf
+            )
 
         print(
             f"epoch {epoch:04d} | "
@@ -730,10 +813,29 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--lambda-contrastive", type=float, default=0.0)
     parser.add_argument("--contrastive-margin", type=float, default=0.1)
+    parser.add_argument("--contrastive-temperature", type=float, default=0.1)
+    parser.add_argument("--contrastive-noise-level", type=float, default=0.2)
+    parser.add_argument("--contrastive-hard-weight", type=float, default=0.5)
     parser.add_argument(
-        "--contrastive-neg-mode",
-        choices=("wrong_action",),
-        default="wrong_action",
+        "--contrastive-calibration-margin",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--contrastive-calibration-weight",
+        type=float,
+        default=0.1,
+    )
+    parser.add_argument(
+        "--contrastive-num-action-shuffles",
+        type=int,
+        default=2,
+    )
+    parser.add_argument(
+        "--contrastive-latent-noise-scales",
+        type=float,
+        nargs="*",
+        default=(0.05, 0.1),
     )
     parser.add_argument(
         "--contrastive-fraction",
@@ -775,6 +877,27 @@ def main() -> None:
 
     if args.contrastive_val_every < 1:
         raise ValueError("--contrastive-val-every must be at least 1.")
+
+    if args.contrastive_temperature <= 0.0:
+        raise ValueError("--contrastive-temperature must be positive.")
+
+    if args.contrastive_hard_weight < 0.0:
+        raise ValueError("--contrastive-hard-weight must be non-negative.")
+
+    if args.contrastive_calibration_weight < 0.0:
+        raise ValueError(
+            "--contrastive-calibration-weight must be non-negative."
+        )
+
+    if args.contrastive_num_action_shuffles < 1:
+        raise ValueError(
+            "--contrastive-num-action-shuffles must be at least 1."
+        )
+
+    if any(scale <= 0.0 for scale in args.contrastive_latent_noise_scales):
+        raise ValueError(
+            "--contrastive-latent-noise-scales must all be positive."
+        )
 
     start = time.perf_counter()
 
