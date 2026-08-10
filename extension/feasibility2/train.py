@@ -26,12 +26,13 @@ from pathlib import Path
 from typing import Any
 
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset, random_split
 
 try:
     from .dataset import FeasibilityDataset, load_tensor_dataset
     from .model import TransformerFeasibilityModel
+    from .hard_negatives import HardNegativeDataset, load_hard_negative_dataset
+    from .losses import contrastive_energy_loss, paired_energy_ranking_loss
     from .scheduler import SigmaScheduler, LogUniformSigmaScheduler
 except ImportError:
     from extension.feasibility2.dataset import (
@@ -39,6 +40,14 @@ except ImportError:
         load_tensor_dataset,
     )
     from extension.feasibility2.model import TransformerFeasibilityModel
+    from extension.feasibility2.hard_negatives import (
+        HardNegativeDataset,
+        load_hard_negative_dataset,
+    )
+    from extension.feasibility2.losses import (
+        contrastive_energy_loss,
+        paired_energy_ranking_loss,
+    )
     from extension.feasibility2.scheduler import (
         SigmaScheduler,
         LogUniformSigmaScheduler,
@@ -84,128 +93,13 @@ def move_batch(
 
     return history, action, z_next, past_actions
 
-def contrastive_energy_loss(
-    model: torch.nn.Module,
-    history: torch.Tensor,
-    action: torch.Tensor,
-    z_next: torch.Tensor,
-    noise_level: float,
-    temperature: float,
-    ranking_margin: float,
-    hard_negative_weight: float,
-    calibration_margin: float,
-    calibration_weight: float,
-    num_action_shuffles: int,
-    latent_noise_scales: tuple[float, ...],
-    debug: bool = False,
-) -> torch.Tensor:
-    """Multi-negative energy objective for action and free-latent planning.
 
-    Combines InfoNCE over mixed negatives, smooth hardest-negative ranking,
-    and absolute energy calibration. Action negatives teach conditional action
-    compatibility; shuffled and perturbed next latents shape the free-latent
-    landscape used by dynamics_mode='none'.
-    """
-    batch_size = history.shape[0]
+def move_hard_negative_batch(batch: Any, device: torch.device):
+    if len(batch) != 5:
+        raise ValueError(f"Expected 5 hard-negative tensors, got {len(batch)}")
+    non_blocking = device.type == "cuda"
+    return tuple(item.to(device, non_blocking=non_blocking) for item in batch)
 
-    if batch_size < 2:
-        return history.new_zeros(())
-
-    sigma = z_next.new_full((batch_size,), float(noise_level))
-    positive_energy = model.energy(
-        history,
-        action,
-        z_next,
-        noise_level=sigma,
-        reduction="none",
-    )
-
-    negative_pairs: list[tuple[torch.Tensor, torch.Tensor]] = []
-
-    max_shuffles = min(num_action_shuffles, batch_size - 1)
-    for shift in range(1, max_shuffles + 1):
-        negative_pairs.append((action.roll(shifts=shift, dims=0), z_next))
-
-    action_std = action.std(dim=0, keepdim=True).clamp_min(1e-3)
-    negative_pairs.extend(
-        [
-            (torch.zeros_like(action), z_next),
-            (-action, z_next),
-            (torch.randn_like(action) * action_std, z_next),
-            (action, z_next.roll(shifts=1, dims=0)),
-        ]
-    )
-
-    for scale in latent_noise_scales:
-        negative_pairs.append(
-            (action, z_next + float(scale) * torch.randn_like(z_next))
-        )
-
-    negative_energies = [
-        model.energy(
-            history,
-            negative_action,
-            negative_z_next,
-            noise_level=sigma,
-            reduction="none",
-        )
-        for negative_action, negative_z_next in negative_pairs
-    ]
-    negative_energy = torch.stack(negative_energies, dim=1)
-
-    all_energies = torch.cat(
-        (positive_energy.unsqueeze(1), negative_energy),
-        dim=1,
-    )
-    logits = -all_energies / temperature
-    targets = torch.zeros(
-        batch_size,
-        device=history.device,
-        dtype=torch.long,
-    )
-    info_nce = F.cross_entropy(logits, targets)
-
-    hardest_negative = negative_energy.min(dim=1).values
-    hard_ranking = temperature * F.softplus(
-        (ranking_margin + positive_energy - hardest_negative) / temperature
-    ).mean()
-
-    calibration = (
-        F.softplus(positive_energy).mean()
-        + F.softplus(calibration_margin - negative_energy).mean()
-    )
-
-    loss = (
-        info_nce
-        + hard_negative_weight * hard_ranking
-        + calibration_weight * calibration
-    )
-
-    if debug:
-        stats = torch.stack(
-            [
-                positive_energy.mean(),
-                negative_energy.mean(),
-                (negative_energy - positive_energy.unsqueeze(1)).mean(),
-                hardest_negative.mean(),
-                info_nce,
-                hard_ranking,
-                calibration,
-            ]
-        ).detach().float().cpu()
-
-        print(
-            f"E_pos={stats[0].item():.6f} "
-            f"E_neg={stats[1].item():.6f} "
-            f"gap={stats[2].item():.6f} "
-            f"E_hard={stats[3].item():.6f} "
-            f"nce={stats[4].item():.6f} "
-            f"hard={stats[5].item():.6f} "
-            f"cal={stats[6].item():.6f} "
-            f"K={negative_energy.shape[1]}"
-        )
-
-    return loss
 
 def make_loader(
     dataset,
@@ -244,10 +138,12 @@ def save_checkpoint(
 
     sd = model.state_dict()
 
-    if args.lambda_contrastive > 0.0 and not any(k.startswith("energy_head") for k in sd):
+    if (args.lambda_contrastive > 0.0 or args.lambda_hard_negative > 0.0) and not any(
+        k.startswith("energy_head") for k in sd
+    ):
         raise RuntimeError(
             "lambda_contrastive > 0, but model.state_dict() has no energy_head."
-    )
+        )
 
     torch.save(
         {
@@ -270,14 +166,15 @@ def save_checkpoint(
             "contrastive_latent_noise_scales": args.contrastive_latent_noise_scales,
             "contrastive_fraction": args.contrastive_fraction,
             "contrastive_every": args.contrastive_every,
+            "lambda_hard_negative": args.lambda_hard_negative,
+            "hard_negative_margin": args.hard_negative_margin,
+            "hard_negative_temperature": args.hard_negative_temperature,
+            "hard_negative_noise_level": args.hard_negative_noise_level,
         },
         path,
     )
 
-    print(
-        f"Saved checkpoint: {path} "
-        f"({time.perf_counter() - start:.2f}s)"
-    )
+    print(f"Saved checkpoint: {path} " f"({time.perf_counter() - start:.2f}s)")
 
 
 def train_feasibility_model(
@@ -286,6 +183,8 @@ def train_feasibility_model(
     scheduler: SigmaScheduler,
     world_model: torch.nn.Module | None,
     args: argparse.Namespace,
+    hard_negative_dataset: HardNegativeDataset | None = None,
+    hard_negative_val_dataset: HardNegativeDataset | None = None,
 ) -> TransformerFeasibilityModel:
     device = torch.device(
         args.device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -333,6 +232,24 @@ def train_feasibility_model(
         num_workers=args.num_workers,
         pin_memory=pin_memory,
     )
+    hard_loader = None
+    hard_val_loader = None
+    if hard_negative_dataset is not None:
+        hard_loader = make_loader(
+            hard_negative_dataset,
+            args.hard_negative_batch_size or args.batch_size,
+            shuffle=True,
+            num_workers=args.num_workers,
+            pin_memory=pin_memory,
+        )
+    if hard_negative_val_dataset is not None:
+        hard_val_loader = make_loader(
+            hard_negative_val_dataset,
+            args.hard_negative_batch_size or args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            pin_memory=pin_memory,
+        )
 
     model = TransformerFeasibilityModel(
         action_dim=int(dataset.actions.shape[-1]),
@@ -357,9 +274,7 @@ def train_feasibility_model(
         if world_model is None:
             raise ValueError("wm_residual requires a world model.")
         if latent_mean is None or latent_std is None:
-            raise ValueError(
-                "wm_residual requires latent_mean and latent_std."
-            )
+            raise ValueError("wm_residual requires latent_mean and latent_std.")
 
         world_model = world_model.to(device)
         world_model.eval()
@@ -388,9 +303,15 @@ def train_feasibility_model(
             "dsm": 0.0,
             "delta": 0.0,
             "contrastive": 0.0,
+            "hard_negative": 0.0,
+            "hard_gap": 0.0,
+            "hard_ranking_accuracy": 0.0,
+            "hard_margin_accuracy": 0.0,
         }
         train_count = 0
         contrastive_count = 0
+        hard_negative_count = 0
+        hard_iterator = iter(hard_loader) if hard_loader is not None else None
 
         previous_step_end = time.perf_counter()
 
@@ -451,10 +372,7 @@ def train_feasibility_model(
                     history.shape[0],
                     max(
                         2,
-                        round(
-                            history.shape[0]
-                            * args.contrastive_fraction
-                        ),
+                        round(history.shape[0] * args.contrastive_fraction),
                     ),
                 )
 
@@ -471,13 +389,41 @@ def train_feasibility_model(
                         calibration_margin=args.contrastive_calibration_margin,
                         calibration_weight=args.contrastive_calibration_weight,
                         num_action_shuffles=args.contrastive_num_action_shuffles,
-                        latent_noise_scales=tuple(
-                            args.contrastive_latent_noise_scales
-                        ),
+                        latent_noise_scales=tuple(args.contrastive_latent_noise_scales),
                         debug=(epoch == 1 and batch_index == 0),
                     )
 
                 contrastive_weight = args.lambda_contrastive
+
+            hard_negative_loss = history.new_zeros(())
+            hard_metrics = None
+            hard_batch_count = 0
+            if hard_iterator is not None and args.lambda_hard_negative > 0.0:
+                try:
+                    hard_batch = next(hard_iterator)
+                except StopIteration:
+                    hard_iterator = iter(hard_loader)
+                    hard_batch = next(hard_iterator)
+                (
+                    hard_history,
+                    hard_positive_action,
+                    hard_positive_next,
+                    hard_negative_action,
+                    hard_negative_next,
+                ) = move_hard_negative_batch(hard_batch, device)
+                hard_batch_count = hard_history.shape[0]
+                with amp_context(device, not args.no_amp):
+                    hard_negative_loss, hard_metrics = paired_energy_ranking_loss(
+                        model,
+                        hard_history,
+                        hard_positive_action,
+                        hard_positive_next,
+                        hard_negative_action,
+                        hard_negative_next,
+                        noise_level=args.hard_negative_noise_level,
+                        temperature=args.hard_negative_temperature,
+                        ranking_margin=args.hard_negative_margin,
+                    )
 
             if profile and device.type == "cuda":
                 torch.cuda.synchronize()
@@ -487,6 +433,7 @@ def train_feasibility_model(
                 dsm_loss
                 + args.lambda_delta * delta_loss
                 + contrastive_weight * contrastive_loss
+                + args.lambda_hard_negative * hard_negative_loss
             )
 
             if not torch.isfinite(loss):
@@ -507,17 +454,28 @@ def train_feasibility_model(
 
             train_sums["total"] += loss.detach().float().item() * batch_count
             train_sums["dsm"] += dsm_loss.detach().float().item() * batch_count
-            train_sums["delta"] += (
-                delta_loss.detach().float().item() * batch_count
-            )
+            train_sums["delta"] += delta_loss.detach().float().item() * batch_count
             train_count += batch_count
 
             if selected_count >= 2:
                 train_sums["contrastive"] += (
-                    contrastive_loss.detach().float().item()
-                    * selected_count
+                    contrastive_loss.detach().float().item() * selected_count
                 )
                 contrastive_count += selected_count
+            if hard_metrics is not None:
+                train_sums["hard_negative"] += (
+                    hard_negative_loss.detach().float().item() * hard_batch_count
+                )
+                train_sums["hard_gap"] += (
+                    hard_metrics["energy_gap"].float().item() * hard_batch_count
+                )
+                train_sums["hard_ranking_accuracy"] += (
+                    hard_metrics["ranking_accuracy"].float().item() * hard_batch_count
+                )
+                train_sums["hard_margin_accuracy"] += (
+                    hard_metrics["margin_accuracy"].float().item() * hard_batch_count
+                )
+                hard_negative_count += hard_batch_count
 
             if profile:
                 print(
@@ -541,10 +499,13 @@ def train_feasibility_model(
             "total": train_sums["total"] / max(train_count, 1),
             "dsm": train_sums["dsm"] / max(train_count, 1),
             "delta": train_sums["delta"] / max(train_count, 1),
-            "contrastive": (
-                train_sums["contrastive"]
-                / max(contrastive_count, 1)
-            ),
+            "contrastive": (train_sums["contrastive"] / max(contrastive_count, 1)),
+            "hard_negative": train_sums["hard_negative"] / max(hard_negative_count, 1),
+            "hard_gap": train_sums["hard_gap"] / max(hard_negative_count, 1),
+            "hard_ranking_accuracy": train_sums["hard_ranking_accuracy"]
+            / max(hard_negative_count, 1),
+            "hard_margin_accuracy": train_sums["hard_margin_accuracy"]
+            / max(hard_negative_count, 1),
         }
 
         model.eval()
@@ -555,6 +516,8 @@ def train_feasibility_model(
         val_count = 0
         val_contrastive_sum = 0.0
         val_contrastive_count = 0
+        val_hard_sums = {"loss": 0.0, "gap": 0.0, "ranking": 0.0, "margin": 0.0}
+        val_hard_count = 0
 
         run_contrastive_val = (
             args.lambda_contrastive > 0.0
@@ -579,7 +542,7 @@ def train_feasibility_model(
                         history,
                         action,
                         z_next,
-                        #noise_level=args.noise_level,
+                        # noise_level=args.noise_level,
                         scheduler=scheduler,
                         reduction="mean",
                     )
@@ -612,39 +575,62 @@ def train_feasibility_model(
                         batch_count,
                         max(
                             2,
-                            round(
-                                batch_count
-                                * args.contrastive_fraction
-                            ),
+                            round(batch_count * args.contrastive_fraction),
                         ),
                     )
 
                     with amp_context(device, not args.no_amp):
-                        contrastive_loss = (
-                            contrastive_energy_loss(
-                                model,
-                                history[:selected_count],
-                                action[:selected_count],
-                                z_next[:selected_count],
-                                noise_level=args.contrastive_noise_level,
-                                temperature=args.contrastive_temperature,
-                                ranking_margin=args.contrastive_margin,
-                                hard_negative_weight=args.contrastive_hard_weight,
-                                calibration_margin=args.contrastive_calibration_margin,
-                                calibration_weight=args.contrastive_calibration_weight,
-                                num_action_shuffles=args.contrastive_num_action_shuffles,
-                                latent_noise_scales=tuple(
-                                    args.contrastive_latent_noise_scales
-                                ),
-                                debug=(epoch == 1 and val_batch_index == 0),
-                            )
+                        contrastive_loss = contrastive_energy_loss(
+                            model,
+                            history[:selected_count],
+                            action[:selected_count],
+                            z_next[:selected_count],
+                            noise_level=args.contrastive_noise_level,
+                            temperature=args.contrastive_temperature,
+                            ranking_margin=args.contrastive_margin,
+                            hard_negative_weight=args.contrastive_hard_weight,
+                            calibration_margin=args.contrastive_calibration_margin,
+                            calibration_weight=args.contrastive_calibration_weight,
+                            num_action_shuffles=args.contrastive_num_action_shuffles,
+                            latent_noise_scales=tuple(
+                                args.contrastive_latent_noise_scales
+                            ),
+                            debug=(epoch == 1 and val_batch_index == 0),
                         )
 
                     val_contrastive_sum += (
-                        contrastive_loss.float().item()
-                        * selected_count
+                        contrastive_loss.float().item() * selected_count
                     )
                     val_contrastive_count += selected_count
+
+            if hard_val_loader is not None and args.lambda_hard_negative > 0.0:
+                for hard_batch_index, hard_batch in enumerate(hard_val_loader):
+                    if (
+                        args.hard_negative_val_batches > 0
+                        and hard_batch_index >= args.hard_negative_val_batches
+                    ):
+                        break
+                    hard_tensors = move_hard_negative_batch(hard_batch, device)
+                    with amp_context(device, not args.no_amp):
+                        hard_loss, hard_metrics = paired_energy_ranking_loss(
+                            model,
+                            *hard_tensors,
+                            noise_level=args.hard_negative_noise_level,
+                            temperature=args.hard_negative_temperature,
+                            ranking_margin=args.hard_negative_margin,
+                        )
+                    count = hard_tensors[0].shape[0]
+                    val_hard_sums["loss"] += hard_loss.float().item() * count
+                    val_hard_sums["gap"] += (
+                        hard_metrics["energy_gap"].float().item() * count
+                    )
+                    val_hard_sums["ranking"] += (
+                        hard_metrics["ranking_accuracy"].float().item() * count
+                    )
+                    val_hard_sums["margin"] += (
+                        hard_metrics["margin_accuracy"].float().item() * count
+                    )
+                    val_hard_count += count
 
         if device.type == "cuda":
             torch.cuda.synchronize()
@@ -662,16 +648,39 @@ def train_feasibility_model(
                 if val_contrastive_count > 0
                 else float("nan")
             ),
+            "hard_negative": (
+                val_hard_sums["loss"] / val_hard_count
+                if val_hard_count
+                else float("nan")
+            ),
+            "hard_gap": (
+                val_hard_sums["gap"] / val_hard_count
+                if val_hard_count
+                else float("nan")
+            ),
+            "hard_ranking_accuracy": (
+                val_hard_sums["ranking"] / val_hard_count
+                if val_hard_count
+                else float("nan")
+            ),
+            "hard_margin_accuracy": (
+                val_hard_sums["margin"] / val_hard_count
+                if val_hard_count
+                else float("nan")
+            ),
         }
 
         checkpoint_metric = val_dsm + args.lambda_delta * val_delta
         if args.lambda_contrastive > 0.0:
             val_contrastive = val_metrics["contrastive"]
             checkpoint_metric = (
-                checkpoint_metric
-                + args.lambda_contrastive * val_contrastive
+                checkpoint_metric + args.lambda_contrastive * val_contrastive
                 if math.isfinite(val_contrastive)
                 else math.inf
+            )
+        if args.lambda_hard_negative > 0.0 and hard_val_loader is not None:
+            checkpoint_metric += (
+                args.lambda_hard_negative * val_metrics["hard_negative"]
             )
 
         print(
@@ -679,8 +688,12 @@ def train_feasibility_model(
             f"train_total={train_metrics['total']:.6f} "
             f"train_dsm={train_metrics['dsm']:.6f} "
             f"train_contrastive={train_metrics['contrastive']:.6f} | "
+            f"train_hard={train_metrics['hard_negative']:.6f} "
+            f"train_hard_acc={train_metrics['hard_margin_accuracy']:.3f} | "
             f"val_dsm={val_metrics['dsm']:.6f} "
-            f"val_contrastive={val_metrics['contrastive']:.6f}"
+            f"val_contrastive={val_metrics['contrastive']:.6f} "
+            f"val_hard={val_metrics['hard_negative']:.6f} "
+            f"val_hard_acc={val_metrics['hard_margin_accuracy']:.3f}"
         )
 
         print(
@@ -773,9 +786,32 @@ def validate_dataset(dataset: FeasibilityDataset) -> None:
         ("next_latents", dataset.next_latents),
     ):
         if not torch.isfinite(tensor[:128]).all():
+            raise ValueError(f"{name} contains NaN or Inf in the first 128 samples.")
+
+
+def validate_hard_negative_dataset(
+    hard_dataset: HardNegativeDataset,
+    positive_dataset: FeasibilityDataset,
+) -> None:
+    tensors = hard_dataset.tensors
+    expected_history_shape = tuple(positive_dataset.histories.shape[1:])
+    expected_action_shape = tuple(positive_dataset.actions.shape[1:])
+    expected_next_shape = tuple(positive_dataset.next_latents.shape[1:])
+    expected = {
+        "histories": expected_history_shape,
+        "positive_actions": expected_action_shape,
+        "negative_actions": expected_action_shape,
+        "positive_next_latents": expected_next_shape,
+        "negative_next_latents": expected_next_shape,
+    }
+    for key, expected_shape in expected.items():
+        actual_shape = tuple(tensors[key].shape[1:])
+        if actual_shape != expected_shape:
             raise ValueError(
-                f"{name} contains NaN or Inf in the first 128 samples."
+                f"Hard-negative {key} shape {actual_shape} != expected {expected_shape}"
             )
+        if not torch.isfinite(tensors[key][:128]).all():
+            raise ValueError(f"Hard-negative {key} contains NaN or Inf")
 
 
 def parse_args() -> argparse.Namespace:
@@ -784,6 +820,16 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument("--dataset", required=True)
+    parser.add_argument(
+        "--hard-negative-dataset",
+        default=None,
+        help="Paired, normalized planner-negative artifact used for training.",
+    )
+    parser.add_argument(
+        "--hard-negative-val-dataset",
+        default=None,
+        help="Episode-disjoint paired artifact used for validation.",
+    )
     parser.add_argument(
         "--checkpoint-out",
         default="checkpoints/feasibility.pt",
@@ -812,6 +858,17 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument("--lambda-contrastive", type=float, default=0.0)
+    parser.add_argument("--lambda-hard-negative", type=float, default=0.0)
+    parser.add_argument("--hard-negative-margin", type=float, default=0.1)
+    parser.add_argument("--hard-negative-temperature", type=float, default=0.1)
+    parser.add_argument("--hard-negative-noise-level", type=float, default=0.0)
+    parser.add_argument("--hard-negative-batch-size", type=int, default=0)
+    parser.add_argument(
+        "--hard-negative-val-batches",
+        type=int,
+        default=0,
+        help="Maximum validation batches; 0 evaluates the complete artifact.",
+    )
     parser.add_argument("--contrastive-margin", type=float, default=0.1)
     parser.add_argument("--contrastive-temperature", type=float, default=0.1)
     parser.add_argument("--contrastive-noise-level", type=float, default=0.2)
@@ -881,28 +938,56 @@ def main() -> None:
     if args.contrastive_temperature <= 0.0:
         raise ValueError("--contrastive-temperature must be positive.")
 
+    if args.lambda_hard_negative < 0.0:
+        raise ValueError("--lambda-hard-negative must be non-negative.")
+    if args.hard_negative_temperature <= 0.0:
+        raise ValueError("--hard-negative-temperature must be positive.")
+    if args.hard_negative_batch_size < 0:
+        raise ValueError("--hard-negative-batch-size must be non-negative.")
+    if args.lambda_hard_negative > 0.0 and not args.hard_negative_dataset:
+        raise ValueError("--lambda-hard-negative requires --hard-negative-dataset.")
+
     if args.contrastive_hard_weight < 0.0:
         raise ValueError("--contrastive-hard-weight must be non-negative.")
 
     if args.contrastive_calibration_weight < 0.0:
-        raise ValueError(
-            "--contrastive-calibration-weight must be non-negative."
-        )
+        raise ValueError("--contrastive-calibration-weight must be non-negative.")
 
     if args.contrastive_num_action_shuffles < 1:
-        raise ValueError(
-            "--contrastive-num-action-shuffles must be at least 1."
-        )
+        raise ValueError("--contrastive-num-action-shuffles must be at least 1.")
 
     if any(scale <= 0.0 for scale in args.contrastive_latent_noise_scales):
-        raise ValueError(
-            "--contrastive-latent-noise-scales must all be positive."
-        )
+        raise ValueError("--contrastive-latent-noise-scales must all be positive.")
 
     start = time.perf_counter()
 
     dataset, metadata = load_tensor_dataset(args.dataset)
     validate_dataset(dataset)
+
+    hard_negative_dataset = None
+    hard_negative_val_dataset = None
+    if args.hard_negative_dataset:
+        hard_negative_dataset, hard_metadata = load_hard_negative_dataset(
+            args.hard_negative_dataset
+        )
+        validate_hard_negative_dataset(hard_negative_dataset, dataset)
+        print(
+            "Hard-negative training samples:",
+            len(hard_negative_dataset),
+            "metadata:",
+            hard_metadata,
+        )
+    if args.hard_negative_val_dataset:
+        hard_negative_val_dataset, hard_val_metadata = load_hard_negative_dataset(
+            args.hard_negative_val_dataset
+        )
+        validate_hard_negative_dataset(hard_negative_val_dataset, dataset)
+        print(
+            "Hard-negative validation samples:",
+            len(hard_negative_val_dataset),
+            "metadata:",
+            hard_val_metadata,
+        )
 
     print("Dataset samples:", len(dataset))
     print("Histories:", tuple(dataset.histories.shape))
@@ -922,9 +1007,7 @@ def main() -> None:
         model_ckpt = metadata.get("model_ckpt")
 
         if model_cfg is None or model_ckpt is None:
-            raise ValueError(
-                "wm_residual requires model_cfg and model_ckpt metadata."
-            )
+            raise ValueError("wm_residual requires model_cfg and model_ckpt metadata.")
 
         world_model, action_repeat = load_world_model(
             device=device,
@@ -946,12 +1029,11 @@ def main() -> None:
         ),
         world_model=world_model,
         args=args,
+        hard_negative_dataset=hard_negative_dataset,
+        hard_negative_val_dataset=hard_negative_val_dataset,
     )
 
-    print(
-        f"Total runtime: "
-        f"{(time.perf_counter() - start) / 60:.2f} minutes"
-    )
+    print(f"Total runtime: " f"{(time.perf_counter() - start) / 60:.2f} minutes")
 
 
 if __name__ == "__main__":
