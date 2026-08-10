@@ -609,6 +609,26 @@ class LatentCollocationSolver:
                     config=self.action_search_config.langevin_adam,
                     generator=generator,
                 )
+            # Temporary rollout consistency diagnostic
+            with torch.no_grad():
+                z1 = self._rollout_world_model(
+                    latent_context=latent_context,
+                    past_action_context=past_action_context,
+                    candidate_actions=search_result.actions,
+                )
+                z2 = self.world_model.rollout(
+                    latent_context=latent_context,
+                    past_action_context=past_action_context,
+                    planned_actions=search_result.actions,
+                )
+
+                print(
+                    "[rollout consistency]"
+                    f" z1_shape={tuple(z1.shape)}"
+                    f" z2_shape={tuple(z2.shape)}"
+                    f" max_abs_diff="
+                    f"{(z1 - z2).abs().max().item():.8e}"
+                )
 
             residuals = torch.zeros(
                 (horizon,) + tuple(current_latent.shape),
@@ -623,35 +643,23 @@ class LatentCollocationSolver:
                 "num_search_chains": float(len(initial_parameters)),
             }
             # added 31 juli -> debug
-            expected_total = (
-                self.config.lambda_video * final_pieces["video_loss"]
-                + self.config.lambda_goal * final_pieces["goal_loss"]
-                + self.config.lambda_action * final_pieces["action_loss"]
-                + self.config.lambda_action_prior * final_pieces["action_prior_loss"]
-                + self.config.lambda_anti_stillness * final_pieces["anti_stillness_loss"]
+            # Verify that reevaluating the selected parameters gives the
+            # objective reported by the action search.
+            with torch.no_grad():
+                final_evaluation = evaluator(search_result.raw_actions)
+
+            reevaluated_objective = float(
+                final_evaluation.loss.detach().cpu()
             )
-
-            if self.config.dynamics_mode == "soft":
-                expected_total = expected_total + final_pieces["weighted_dynamics_penalty"]
-
-            if (
-                self.feasibility_config is not None
-                and self.feasibility_config.enabled
-            ):
-                expected_total = expected_total + final_pieces["weighted_feasibility"]
+            objective_difference = abs(
+                reevaluated_objective - search_result.objective
+            )
 
             print(
                 "[objective check] "
-                f"expected_total={float(expected_total.detach().cpu()):.6f} "
-                f"reported_total={float(final_augmented_tensor.detach().cpu()):.6f} "
-                f"diff={float((expected_total - final_augmented_tensor).abs().detach().cpu()):.6e} "
-                f"video={float(final_pieces['video_loss'].detach().cpu()):.6f} "
-                f"goal={float(final_pieces['goal_loss'].detach().cpu()):.6f} "
-                f"action={float(final_pieces['action_loss'].detach().cpu()):.6f} "
-                f"dyn={float(final_pieces['dynamics_penalty'].detach().cpu()):.6f} "
-                f"w_dyn={float(final_pieces['weighted_dynamics_penalty'].detach().cpu()):.6f} "
-                f"feas={float(final_pieces['feasibility_loss'].detach().cpu()):.6f} "
-                f"w_feas={float(final_pieces['weighted_feasibility'].detach().cpu()):.6f}"
+                f"search={search_result.objective:.6f} "
+                f"reevaluated={reevaluated_objective:.6f} "
+                f"diff={objective_difference:.6e}"
             )
 
             return CollocationResult(

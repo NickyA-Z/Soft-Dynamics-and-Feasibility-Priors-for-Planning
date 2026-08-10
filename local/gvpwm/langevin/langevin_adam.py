@@ -126,18 +126,37 @@ def run_langevin_adam(
     if config.langevin_steps < 0 or config.adam_steps < 0:
         raise ValueError("langevin_steps and adam_steps must be non-negative")
 
-    explored_candidates = [
+    # Evaluate the initial candidates.
+    with torch.no_grad():
+        initial_costs = [
+            float(evaluate_actions(parameter).loss.detach().cpu())
+            for parameter in initial_parameters
+        ]
+    best_initial_cost = min(initial_costs)
+
+    # Run Langevin separately and retain its objective values.
+    explored_results = [
         _run_langevin_chain(
             initial_parameter,
             evaluate_actions,
             config,
             chain_index,
             generator,
-        ).raw_actions
+        )
         for chain_index, initial_parameter in enumerate(initial_parameters)
     ]
 
-    return run_multistart_adam(
+    explored_candidates = [
+        result.raw_actions
+        for result in explored_results
+    ]
+    best_langevin_cost = min(
+        result.objective
+        for result in explored_results
+    )
+
+    # Run Adam from the points returned by Langevin.
+    adam_result = run_multistart_adam(
         initial_parameters=explored_candidates,
         evaluate_actions=evaluate_actions,
         config=MultiStartAdamConfig(
@@ -148,3 +167,15 @@ def run_langevin_adam(
             raw_action_limit=config.raw_action_limit,
         ),
     )
+
+    print(
+        "[langevin-adam stages] "
+        f"initial={best_initial_cost:.6f} "
+        f"after_langevin={best_langevin_cost:.6f} "
+        f"after_adam={adam_result.objective:.6f} "
+        f"langevin_improvement={best_initial_cost - best_langevin_cost:.6f} "
+        f"adam_improvement={best_langevin_cost - adam_result.objective:.6f} "
+        f"total_improvement={best_initial_cost - adam_result.objective:.6f}"
+    )
+
+    return adam_result

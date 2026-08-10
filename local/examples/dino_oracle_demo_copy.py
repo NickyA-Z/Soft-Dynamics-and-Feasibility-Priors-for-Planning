@@ -193,7 +193,7 @@ def build_planner(
                 warm_start=False,  # Reuse previous solution as initialization for next MPC step.
             ),
             refinement= RefinementConfig(
-                enabled=True,  # If True, use extra sampling/refinement after gradient optimization.
+                enabled=False,  # If True, use extra sampling/refinement after gradient optimization.
                 num_samples=500,  # Number of sampled candidate action sequences for refinement.
                 noise_variance=0.3,  # Sampling noise variance for refinement.
                 objective="planner", # new since juli 14
