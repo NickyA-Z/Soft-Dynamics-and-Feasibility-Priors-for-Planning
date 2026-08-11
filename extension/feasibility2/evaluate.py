@@ -225,7 +225,12 @@ def evaluate_action_discrimination(
     dsm_shuffle_actions = []
     dsm_neg_actions = []
     dsm_gaussian_actions = []
-    for history, action, z_next in loader:
+    for batch in loader:
+        if len(batch) == 4:
+            history, action, z_next, _ = batch
+        else:
+            history, action, z_next = batch
+
         history = history.to(device)
         action = action.to(device)
         z_next = z_next.to(device)
