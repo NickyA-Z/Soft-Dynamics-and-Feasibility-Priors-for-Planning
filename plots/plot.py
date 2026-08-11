@@ -169,15 +169,36 @@ def plot_episode_log(
             edgecolor="black", linewidth=0.5, label="Goal block", zorder=5,
         )
 
-    for prefix, key, offset in (
-        ("P", "planner_agent", (5, 5)),
-        ("O", "oracle_agent", (5, -13)),
-    ):
-        for step, point in enumerate(trajectories[key]):
-            ax.annotate(
-                f"{prefix}{step}", point, xytext=offset,
-                textcoords="offset points", fontsize=8,
-            )
+    # Label the shared initial position once.
+    start = trajectories["planner_agent"][0]
+    ax.annotate(
+        "S",
+        start,
+        xytext=(5, -13),
+        textcoords="offset points",
+        fontsize=9,
+        fontweight="bold",
+    )
+
+    # Index post-action planner positions consistently with [env step N].
+    for step, point in enumerate(trajectories["planner_agent"][1:]):
+        ax.annotate(
+            f"P{step}",
+            point,
+            xytext=(5, 5),
+            textcoords="offset points",
+            fontsize=8,
+        )
+
+    # Oracle points after each corresponding macro action.
+    for step, point in enumerate(trajectories["oracle_agent"][1:]):
+        ax.annotate(
+            f"O{step}",
+            point,
+            xytext=(5, -13),
+            textcoords="offset points",
+            fontsize=8,
+        )
 
     episode_label = trajectories["episode"]
     title = "Planner vs Oracle Trajectories"
