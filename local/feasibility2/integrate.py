@@ -231,9 +231,20 @@ def score_trajectory_feasibility(
     lambda_action_consistency: float = 0.0,
     action_consistency_margin: float = 0.1,
     latent_reduction: str = "mean",
+    dsm_noise: torch.Tensor | None = None,
 
     return_diagnostics: bool = False,
 ) -> torch.Tensor | tuple[torch.Tensor, dict]:
+    if dsm_noise is not None:
+        expected_shape = (candidate_actions.shape[0],) + tuple(
+            candidate_latents.shape[1:]
+        )
+        if tuple(dsm_noise.shape) != expected_shape:
+            raise ValueError(
+                "dsm_noise must contain one latent-shaped sample per action: "
+                f"got {tuple(dsm_noise.shape)}, expected {expected_shape}"
+            )
+
     full_latents = torch.cat([latent_context, candidate_latents[1:]], dim=0)
     context_len = latent_context.shape[0]
 
@@ -291,6 +302,7 @@ def score_trajectory_feasibility(
 
         action = candidate_actions_norm[t]
         z_next = full_latents_norm[end]
+        step_noise = None if dsm_noise is None else dsm_noise[t]
 
         dsm_energy = feasibility_model.penalty(
             history,
@@ -298,6 +310,7 @@ def score_trajectory_feasibility(
             z_next,
             noise_level=noise_level,
             reduction="mean",
+            eps=step_noise,
         )
 
         contrastive_energy = history.new_tensor(0.0)
@@ -326,6 +339,7 @@ def score_trajectory_feasibility(
                 z_next,
                 noise_level=noise_level,
                 reduction="mean",
+                eps=step_noise,
             )
 
             action_consistency_penalty = torch.relu(

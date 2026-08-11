@@ -355,6 +355,7 @@ class TransformerFeasibilityModel(nn.Module):
         z_next: torch.Tensor,
         noise_level=None,
         reduction: Reduction = "none",
+        eps: torch.Tensor | None = None,
     ) -> torch.Tensor:
         history_b, action_b, z_b, single = self._batchify(history, action, z_next)
 
@@ -362,8 +363,19 @@ class TransformerFeasibilityModel(nn.Module):
         sigma = self._noise_tensor(noise_level, batch_size, z_b.device, z_b.dtype)
         sigma_expanded = sigma.reshape(-1, *([1] * (z_b.ndim - 1)))
 
-        eps = torch.randn_like(z_b)
-        z_noisy = z_b + sigma_expanded * eps
+        if eps is None:
+            eps_b = torch.randn_like(z_b)
+        else:
+            eps_b = eps.to(device=z_b.device, dtype=z_b.dtype)
+            if eps_b.shape == z_b.shape[1:]:
+                eps_b = eps_b.unsqueeze(0)
+            if eps_b.shape != z_b.shape:
+                raise ValueError(
+                    "eps must match z_next after batching: "
+                    f"got {tuple(eps_b.shape)}, expected {tuple(z_b.shape)}"
+                )
+
+        z_noisy = z_b + sigma_expanded * eps_b
         pred_eps = self.forward(history_b, action_b, z_noisy, sigma)
 
         energy = pred_eps.reshape(pred_eps.shape[0], -1).pow(2).mean(dim=-1)
@@ -812,7 +824,11 @@ class FeasibilityModel(nn.Module):
         z_next: torch.Tensor,
         noise_level=None,
         reduction: Reduction = "none",
+        eps: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        # This legacy MLP penalty does not sample DSM noise. Accept ``eps`` so
+        # callers can use the same penalty interface as the transformer model.
+        del eps
         pred_eps = self.forward(history, action, z_next, noise_level)
         if pred_eps.ndim == 1:
             energy = pred_eps.pow(2).sum().unsqueeze(0)

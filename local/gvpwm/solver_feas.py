@@ -72,6 +72,7 @@ class LatentCollocationSolver:
         goal_latent: torch.Tensor,
         video_latents: torch.Tensor,
         action_prior: torch.Tensor | None,
+        dsm_noise: torch.Tensor | None,
     ) -> ActionEvaluation:
         """Evaluate raw actions through the differentiable rollout pipeline."""
         actions = self._actions_from_parameter(raw_actions)
@@ -92,6 +93,7 @@ class LatentCollocationSolver:
             latent_context=latent_context,
             candidate_latents=latents,
             candidate_actions=actions,
+            dsm_noise=dsm_noise,
         )
         total_loss = objective + feasibility
 
@@ -456,6 +458,7 @@ class LatentCollocationSolver:
         latent_context: torch.Tensor,
         candidate_latents: torch.Tensor,
         candidate_actions: torch.Tensor,
+        dsm_noise: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         if (
             self.feasibility_config is None
@@ -492,6 +495,7 @@ class LatentCollocationSolver:
             lambda_action_consistency=self.feasibility_config.lambda_action_consistency,
             action_consistency_margin=self.feasibility_config.action_consistency_margin,
             latent_reduction=self.feasibility_config.latent_reduction,
+            dsm_noise=dsm_noise,
 
             return_diagnostics=True,
         )
@@ -523,6 +527,27 @@ class LatentCollocationSolver:
 
         current_latent = latent_context[-1]
         horizon = video_latents.shape[0] - 1
+
+        # Common random numbers: use one independent DSM noise sample per
+        # transition, held fixed for every objective/gradient evaluation in
+        # this solve. A new MPC solve receives a fresh bank.
+        uses_dsm_noise = (
+            self.feasibility_config is not None
+            and self.feasibility_config.enabled
+            and (
+                self.feasibility_config.lambda_dsm > 0
+                or self.feasibility_config.lambda_action_consistency > 0
+            )
+        )
+        fixed_dsm_noise = (
+            torch.randn(
+                (horizon,) + tuple(current_latent.shape),
+                device=current_latent.device,
+                dtype=current_latent.dtype,
+            )
+            if uses_dsm_noise
+            else None
+        )
 
         initial_latents = self._initialize_latents(
             current_latent=current_latent,
@@ -594,6 +619,7 @@ class LatentCollocationSolver:
                 goal_latent=goal_latent,
                 video_latents=video_latents,
                 action_prior=action_prior,
+                dsm_noise=fixed_dsm_noise,
             )
 
             if action_search_method == "multistart_adam":
@@ -791,6 +817,7 @@ class LatentCollocationSolver:
                             latent_context=latent_context,
                             candidate_latents=candidate_latents,
                             candidate_actions=actions,
+                            dsm_noise=fixed_dsm_noise,
                         )
                     )
                     augmented = augmented + feasibility_penalty
@@ -1018,6 +1045,7 @@ class LatentCollocationSolver:
                         latent_context=latent_context,
                         candidate_latents=final_latents,
                         candidate_actions=final_actions,
+                        dsm_noise=fixed_dsm_noise,
                     )
                 )
                 final_augmented_tensor = (
