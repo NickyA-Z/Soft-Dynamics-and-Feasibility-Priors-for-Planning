@@ -264,10 +264,11 @@ def score_trajectory_feasibility(
     else:
         full_latents_norm = full_latents
 
-    candidate_actions_norm = _normalize_action(
-        candidate_actions,
-        feasibility_model,
-    ).to(
+    # ``candidate_actions`` comes directly from the GVP-WM planner. The
+    # planner and feasibility dataset both use the DINO-WM normalized action
+    # convention, so applying ``_normalize_action`` here would divide by the
+    # environment scale and standardize a second time.
+    candidate_actions_norm = candidate_actions.to(
         device=candidate_actions.device,
         dtype=candidate_actions.dtype,
     )
