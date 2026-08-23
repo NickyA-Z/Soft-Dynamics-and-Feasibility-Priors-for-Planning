@@ -52,3 +52,46 @@ fixed noise during an optimization solve.
 Action optimization uses the dataset-derived lower and upper bound of each
 individual macro-action coordinate. It does not collapse those bounds into one
 global scalar range.
+
+## Planner-aligned training
+
+The new training entry point is `codex.training.run`. It reuses the existing
+`extension.feasibility2` tensor dataset, transformer model, DSM loss, sigma
+scheduler, AMP helper, and checkpoint layout. No training implementation under
+`extension/` or `local/` is changed.
+
+The new contrastive portion is deliberately action-only: history and next
+latent remain fixed while actions are perturbed or optimized. Training has
+three stages within one run:
+
+1. DSM warmup.
+2. Multi-scale local action ranking.
+3. Online bounded adversarial action mining using the current energy head.
+
+Every epoch is validated by minimizing energy over actions on a separate
+episode-disjoint dataset. The best checkpoint is selected using recovery MSE,
+cosine similarity, and whether the expert still beats the optimized action.
+
+Build two dataset artifacts with `extension.feasibility2.build`, for example
+episodes 0--499 for training and 500--549 for validation. The validation build
+must use the training artifact through `--norm-stats`, so both contain identical
+latent normalization statistics. The trainer rejects overlapping episode
+ranges or mismatched statistics.
+
+After setting `TRAIN_DATASET` and `VAL_DATASET` in the job file, submit:
+
+```bash
+sbatch codex/jobs/train_planner_aligned.sbatch
+```
+
+The selected checkpoint is `planner_aligned.pt`. The accompanying
+`planner_aligned_final.pt` is only the last epoch and should not be preferred
+automatically.
+
+This setup is more expensive because mining runs inner action-optimization
+steps. With the supplied defaults (three starts, 12 steps every fourth batch),
+expect roughly 10--20 times the cost of DSM-only training. The existing mixed
+contrastive implementation already evaluates many negatives, so relative to
+that full DSM+contrastive setup the likely increase is closer to 1.5--3 times.
+Actual cost depends strongly on attention memory, batch size, and GPU
+utilization; the first epoch should be timed before requesting a long run.
