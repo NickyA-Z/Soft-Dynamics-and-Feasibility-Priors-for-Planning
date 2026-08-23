@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+import torch
+
 
 DSMMode = Literal["paper_clean", "noisy_probe"]
 OptimizationMode = Literal["joint", "alternating"]
@@ -59,8 +61,8 @@ class OptimizerConfig:
 class PlannerConfig:
     horizon: int = 5
     history_length: int = 3
-    action_low: float = -3.0
-    action_high: float = 3.0
+    action_low: float | torch.Tensor = -3.0
+    action_high: float | torch.Tensor = 3.0
     seed: int = 0
     objective: ObjectiveConfig = field(default_factory=ObjectiveConfig)
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
@@ -68,5 +70,9 @@ class PlannerConfig:
     def __post_init__(self) -> None:
         if self.horizon < 1 or self.history_length < 1:
             raise ValueError("horizon and history_length must be positive")
-        if self.action_low >= self.action_high:
-            raise ValueError("action_low must be smaller than action_high")
+        low = torch.as_tensor(self.action_low)
+        high = torch.as_tensor(self.action_high)
+        if low.shape != high.shape:
+            raise ValueError("action_low and action_high must have matching shapes")
+        if not torch.all(low < high):
+            raise ValueError("Every action_low coordinate must be smaller than action_high")

@@ -48,3 +48,7 @@ DINO-WM/feasibility training. Latents are raw encoder latents and are normalized
 exactly once inside the scorer. DSM defaults to the paper's clean-query energy
 `mean(e_theta(h,a,z_next,sigma)^2)`; stochastic probing is optional and uses
 fixed noise during an optimization solve.
+
+Action optimization uses the dataset-derived lower and upper bound of each
+individual macro-action coordinate. It does not collapse those bounds into one
+global scalar range.

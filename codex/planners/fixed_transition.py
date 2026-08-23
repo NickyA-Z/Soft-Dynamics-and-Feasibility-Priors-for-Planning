@@ -13,7 +13,9 @@ class FixedTransitionPlanner:
     """Recover an action while holding history and the true next latent fixed."""
 
     def __init__(self, feasibility: FeasibilityScorer, objective: ObjectiveConfig,
-                 optimizer: OptimizerConfig, action_low: float, action_high: float) -> None:
+                 optimizer: OptimizerConfig,
+                 action_low: float | torch.Tensor,
+                 action_high: float | torch.Tensor) -> None:
         self.feasibility = feasibility
         self.objective = objective
         self.optimizer = optimizer

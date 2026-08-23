@@ -45,10 +45,10 @@ def main() -> None:
     expert = expert_macro_actions(
         episode, action_repeat, primitive_dim, args.horizon
     ).to(device)
-    # Use the broad scalar envelope while preserving tanh bounds. The checkpoint
-    # still receives actions in the exact already-normalized training convention.
-    low = float(adapter.action_low.min().cpu())
-    high = float(adapter.action_high.max().cpu())
+    # Preserve the dataset-derived bound of every macro-action coordinate.
+    # The repeated x/y coordinates can have different valid normalized ranges.
+    low = adapter.action_low.detach().clone()
+    high = adapter.action_high.detach().clone()
     config = PlannerConfig(
         horizon=args.horizon,
         history_length=adapter.history_length,

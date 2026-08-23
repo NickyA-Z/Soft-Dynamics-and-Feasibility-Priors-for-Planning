@@ -26,8 +26,8 @@ class TrajectoryOptimizer:
         self,
         objective: PlanningObjective,
         config: OptimizerConfig,
-        action_low: float,
-        action_high: float,
+        action_low: float | torch.Tensor,
+        action_high: float | torch.Tensor,
     ) -> None:
         self.objective = objective
         self.config = config

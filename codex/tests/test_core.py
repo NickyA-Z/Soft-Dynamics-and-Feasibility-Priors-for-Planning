@@ -38,6 +38,19 @@ def test_action_reparameterization_round_trip() -> None:
     assert torch.allclose(raw_to_actions(actions_to_raw(actions, -3, 3), -3, 3), actions)
 
 
+def test_per_coordinate_action_bounds() -> None:
+    low = torch.tensor([-2.0, 10.0, -0.5])
+    high = torch.tensor([2.0, 20.0, 0.5])
+    midpoint = raw_to_actions(torch.zeros(2, 3), low, high)
+    assert torch.allclose(midpoint[0], torch.tensor([0.0, 15.0, 0.0]))
+
+    raw = torch.tensor([[20.0, -20.0, 20.0]])
+    bounded = raw_to_actions(raw, low, high)
+    assert torch.all(bounded <= high)
+    assert torch.all(bounded >= low)
+    assert bounded[0, 1] < 10.001
+
+
 def test_mpc_history_uses_real_prefix() -> None:
     prefix = torch.tensor([[1.0], [2.0], [3.0]])
     candidates = torch.tensor([[3.0], [4.0], [5.0]])
