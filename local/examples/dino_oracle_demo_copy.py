@@ -169,7 +169,7 @@ def build_planner(
                 clip_grad_norm=None,  # If set, clips gradient norm of optimized action/latent parameters.
                 use_video_init=True,  # If True, initialize latent trajectory from video latents; if False, interpolate current->goal.
                 use_video_loss=True,  # If True, include video alignment loss for intermediate latents.
-                fix_states_to_video=False,  # If True, fix latents and only optimize actions.
+                fix_states_to_video=True,  # changedto true on 14 aug # If True, fix latents and only optimize actions.
                 use_action_reparameterization=True, # false # (22749227:True)If True, optimize unconstrained params through tanh into action bounds.
                 adam_eps=1e-8,  # Numerical epsilon used by Adam optimizer.
                 diagnostic_inner_interval=diagnostic_inner_interval,  # Frequency for inner optimization debug prints.
