@@ -4,7 +4,11 @@ import torch
 from torch import nn
 
 from codex.training.losses import multi_action_ranking_loss
-from codex.training.mining import local_action_negatives, mine_adversarial_actions
+from codex.training.mining import (
+    global_action_negatives,
+    local_action_negatives,
+    mine_adversarial_actions,
+)
 
 
 class QuadraticEnergy(nn.Module):
@@ -19,6 +23,16 @@ def test_local_negatives_respect_coordinate_bounds() -> None:
     low, high = torch.tensor([-0.1, -2.0]), torch.tensor([0.1, 3.0])
     negatives = local_action_negatives(action, low, high, (0.5, 2.0))
     assert negatives.shape == (4, 2, 2)
+    assert torch.all(negatives >= low) and torch.all(negatives <= high)
+
+
+def test_global_negatives_include_zero_and_respect_bounds() -> None:
+    positive = torch.tensor([[0.2, 0.8], [-0.4, 0.3], [0.7, -0.2]])
+    low, high = torch.tensor([-0.5, -0.25]), torch.tensor([0.75, 1.0])
+    negatives = global_action_negatives(positive, low, high, num_shuffles=2)
+    assert negatives.shape == (3, 5, 2)
+    expected_zero = torch.zeros_like(positive).maximum(low).minimum(high)
+    assert torch.equal(negatives[:, 0], expected_zero)
     assert torch.all(negatives >= low) and torch.all(negatives <= high)
 
 

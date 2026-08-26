@@ -7,7 +7,11 @@ import torch
 
 from codex.training.config import TrainingConfig
 from codex.training.losses import calibrated_energy_loss, multi_action_ranking_loss
-from codex.training.mining import local_action_negatives, mine_adversarial_actions
+from codex.training.mining import (
+    global_action_negatives,
+    local_action_negatives,
+    mine_adversarial_actions,
+)
 from codex.training.validation import action_recovery_batch
 from extension.feasibility2.dataset import FeasibilityDataset
 from extension.feasibility2.model import TransformerFeasibilityModel
@@ -80,7 +84,10 @@ class PlannerAlignedTrainer:
         best_metric = math.inf
         for epoch in range(1, cfg.epochs + 1):
             self.model.train()
-            sums = {"total": 0.0, "dsm": 0.0, "local": 0.0, "adversarial": 0.0}
+            sums = {
+                "total": 0.0, "dsm": 0.0, "global": 0.0,
+                "local": 0.0, "adversarial": 0.0,
+            }
             count = 0
             warmup = epoch <= cfg.dsm_warmup_epochs
             for batch_index, batch in enumerate(train_loader):
@@ -92,13 +99,23 @@ class PlannerAlignedTrainer:
                         scheduler=self.scheduler, reduction="mean",
                     )
                 local = history.new_zeros(())
+                global_ranking = history.new_zeros(())
                 adversarial = history.new_zeros(())
                 calibration = history.new_zeros(())
                 if not warmup:
+                    global_actions = global_action_negatives(
+                        action, self.low, self.high, cfg.num_action_shuffles
+                    )
                     local_actions = local_action_negatives(
                         action, self.low, self.high, cfg.local_noise_scales
                     )
                     with amp_context(self.device, True):
+                        global_ranking, _ = multi_action_ranking_loss(
+                            self.model, history, action, z_next, global_actions,
+                            noise_level=cfg.contrastive_noise_level,
+                            margin=cfg.ranking_margin,
+                            temperature=cfg.temperature,
+                        )
                         local, _ = multi_action_ranking_loss(
                             self.model, history, action, z_next, local_actions,
                             noise_level=cfg.contrastive_noise_level,
@@ -144,6 +161,7 @@ class PlannerAlignedTrainer:
                 loss = (
                     dsm if warmup else
                     cfg.lambda_dsm * dsm
+                    + cfg.lambda_global * global_ranking
                     + cfg.lambda_local * local
                     + cfg.lambda_adversarial * adversarial_frequency_correction * adversarial
                     + cfg.lambda_calibration * adversarial_frequency_correction * calibration
@@ -156,13 +174,15 @@ class PlannerAlignedTrainer:
                 batch_count = history.shape[0]
                 count += batch_count
                 for name, value in (("total", loss), ("dsm", dsm),
+                                    ("global", global_ranking),
                                     ("local", local), ("adversarial", adversarial)):
                     sums[name] += float(value.detach()) * batch_count
             train_metrics = {name: value / max(count, 1) for name, value in sums.items()}
             val_metrics = self._validate(val_loader)
             selection_metric = (
                 val_metrics["recovery_ratio"]
-                + (1.0 - val_metrics["expert_beats_optimized"])
+                + 2.0 * (1.0 - val_metrics["expert_beats_zero"])
+                + 2.0 * (1.0 - val_metrics["expert_beats_optimized"])
                 - 0.1 * val_metrics["cosine"]
             )
             print(
@@ -218,9 +238,13 @@ class PlannerAlignedTrainer:
             "training_setup": "codex_planner_aligned_v1",
             "lambda_delta": 0.0,
             "lambda_contrastive": self.config.lambda_local,
+            "lambda_global": self.config.lambda_global,
             "lambda_hard_negative": self.config.lambda_adversarial,
             "contrastive_noise_level": self.config.contrastive_noise_level,
-            "planner_selection_metric": "recovery_ratio+failure_rate-0.1*cosine",
+            "planner_selection_metric": (
+                "recovery_ratio+2*(1-expert_beats_zero)+"
+                "2*(1-expert_beats_optimized)-0.1*cosine"
+            ),
         }, path)
         print(f"Saved {'best' if best else 'final'} checkpoint: {path}")
 

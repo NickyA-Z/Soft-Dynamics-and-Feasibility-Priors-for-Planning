@@ -31,6 +31,7 @@ class TrainingConfig:
     weight_decay: float = 1e-5
     gradient_clip_norm: float = 10.0
     lambda_dsm: float = 0.1
+    lambda_global: float = 1.0
     lambda_local: float = 1.0
     lambda_adversarial: float = 1.0
     lambda_calibration: float = 0.1
@@ -39,6 +40,7 @@ class TrainingConfig:
     temperature: float = 0.1
     contrastive_noise_level: float = 0.2
     local_noise_scales: tuple[float, ...] = (0.05, 0.15, 0.4, 0.8)
+    num_action_shuffles: int = 2
     num_workers: int = 4
     validation_batches: int = 8
     validation_starts: int = 3
@@ -51,6 +53,8 @@ class TrainingConfig:
             raise ValueError("Warmup must be non-negative and shorter than training")
         if self.batch_size < 2 or self.validation_batches < 1:
             raise ValueError("Batch size and validation batches must be valid")
+        if self.num_action_shuffles < 1:
+            raise ValueError("At least one shuffled-action negative is required")
         if self.model_dim % self.num_heads != 0 or self.num_layers < 1:
             raise ValueError("Invalid transformer dimensions")
         for name, value in vars(self).items():

@@ -88,6 +88,21 @@ The selected checkpoint is `planner_aligned.pt`. The accompanying
 `planner_aligned_final.pt` is only the last epoch and should not be preferred
 automatically.
 
+### V2 combined-negative fine-tuning
+
+After a v1 checkpoint exists, the recommended follow-up is:
+
+```bash
+sbatch codex/jobs/train_planner_aligned_v2.sbatch
+```
+
+V2 initializes from `planner_aligned.pt`, uses no DSM-only warmup, and combines
+all action-only negatives in one run: zero, shuffled, negated, bounded random,
+multi-scale local, and online adversarial actions. It writes the independently
+selected `planner_aligned_v2.pt`, leaving the v1 checkpoint untouched. Model
+selection explicitly penalizes failure to rank the expert below both zero and
+optimized actions in addition to action-recovery error.
+
 This setup is more expensive because mining runs inner action-optimization
 steps. With the supplied defaults (three starts, 12 steps every fourth batch),
 expect roughly 10--20 times the cost of DSM-only training. The existing mixed

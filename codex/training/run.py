@@ -21,6 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--lambda-dsm", type=float, default=0.1)
+    parser.add_argument("--lambda-global", type=float, default=1.0)
     parser.add_argument("--lambda-local", type=float, default=1.0)
     parser.add_argument("--lambda-adversarial", type=float, default=1.0)
     parser.add_argument("--adversarial-starts", type=int, default=3)
@@ -46,6 +47,7 @@ def main() -> None:
         batch_size=args.batch_size,
         learning_rate=args.learning_rate,
         lambda_dsm=args.lambda_dsm,
+        lambda_global=args.lambda_global,
         lambda_local=args.lambda_local,
         lambda_adversarial=args.lambda_adversarial,
         num_workers=args.num_workers,

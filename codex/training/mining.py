@@ -20,6 +20,34 @@ def local_action_negatives(
     return torch.stack(candidates, dim=1)
 
 
+def global_action_negatives(
+    positive: torch.Tensor,
+    low: torch.Tensor,
+    high: torch.Tensor,
+    num_shuffles: int = 2,
+) -> torch.Tensor:
+    """Generate broad action negatives while keeping the transition fixed.
+
+    Zero, negated, shuffled, and random negatives are adapted from
+    ``extension.feasibility2.losses.contrastive_energy_loss``. The random and
+    negated actions are additionally clipped to the dataset-derived
+    per-coordinate bounds, which the original function does not enforce.
+    """
+    low = low.to(positive)
+    high = high.to(positive)
+    candidates = [
+        torch.zeros_like(positive).maximum(low).minimum(high),
+        (-positive).maximum(low).minimum(high),
+        low + torch.rand_like(positive) * (high - low),
+    ]
+    max_shuffles = min(num_shuffles, positive.shape[0] - 1)
+    candidates.extend(
+        positive.roll(shifts=shift, dims=0)
+        for shift in range(1, max_shuffles + 1)
+    )
+    return torch.stack(candidates, dim=1)
+
+
 def mine_adversarial_actions(
     model: torch.nn.Module,
     history: torch.Tensor,
