@@ -5,9 +5,9 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G
-#SBATCH --time=01:00:00
-#SBATCH --output=/home/nvzutphen/logs/con/codex_fixed_%j.out
-#SBATCH --error=/home/nvzutphen/logs/con/codex_fixed_%j.err
+#SBATCH --time=00:20:00
+#SBATCH --output=/home/nvzutphen/logs/dex/codex_fixed_%j.out
+#SBATCH --error=/home/nvzutphen/logs/dex/codex_fixed_%j.err
 
 set -euo pipefail
 
@@ -18,7 +18,7 @@ module load Anaconda3/2025.06-1
 ENV_PREFIX="$HOME/.conda/envs/dl2_dino"
 PYTHON="$ENV_PREFIX/bin/python"
 PROJECT_DIR="$HOME"
-FEASIBILITY_CKPT="$HOME/checkpoints/feasibility_pusht/better_varcon_final.pt"
+FEASIBILITY_CKPT="$HOME/checkpoints/feasibility_pusht/planner_aligned_v2.pt"
 
 if [[ ! -x "$PYTHON" ]]; then
     echo "ERROR: Python executable not found: $PYTHON" >&2
@@ -107,7 +107,7 @@ echo "===== Fixed-transition one-step action recovery ====="
     --split val \
     --episode-idx 2 \
     --horizon 5 \
-    --lambda-dsm 1.0 \
+    --lambda-dsm 0.0 \
     --lambda-contrastive 1.0 \
     --steps 300 \
     --optimizer joint \

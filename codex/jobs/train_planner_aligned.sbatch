@@ -5,9 +5,9 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=96G
-#SBATCH --time=24:00:00
-#SBATCH --output=/home/nvzutphen/logs/con/feas_adv_%j.out
-#SBATCH --error=/home/nvzutphen/logs/con/feas_adv_%j.err
+#SBATCH --time=06:00:00
+#SBATCH --output=/home/nvzutphen/logs/dex/feas_adv_%j.out
+#SBATCH --error=/home/nvzutphen/logs/dex/feas_adv_%j.err
 
 set -euo pipefail
 
@@ -21,8 +21,8 @@ PROJECT_DIR="$HOME"
 
 # These must be distinct, episode-disjoint artifacts. The validation artifact
 # must have been built with --norm-stats pointing to TRAIN_DATASET.
-TRAIN_DATASET="$HOME/data/feasibility/feas_transformer_train.pt"
-VAL_DATASET="$HOME/data/feasibility/feas_transformer_val.pt"
+TRAIN_DATASET="$HOME/data/feasibility_train_pusht_0_499.pt"
+VAL_DATASET="$HOME/data/feasibility_val_pusht_500_549.pt"
 CHECKPOINT_OUT="$HOME/checkpoints/feasibility_pusht/planner_aligned.pt"
 
 for required in "$PYTHON" "$TRAIN_DATASET" "$VAL_DATASET"; do
