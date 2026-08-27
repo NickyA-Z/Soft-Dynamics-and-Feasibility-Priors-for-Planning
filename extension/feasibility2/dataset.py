@@ -35,9 +35,19 @@ except ImportError:
             slice_wall_oracle_episode,
         )
     except ImportError:
-        compute_wall_stats = None
-        load_wall_oracle_episode = None
-        slice_wall_oracle_episode = None
+        try:
+            # The maintained Wall oracle implementation lives with the
+            # reimplementation planner. Reuse it instead of keeping a third
+            # copy under extension/examples.
+            from reimplementation.src.gvpwm.examples.dino_wall_oracle_utils import (
+                compute_wall_stats,
+                load_wall_oracle_episode,
+                slice_wall_oracle_episode,
+            )
+        except ImportError:
+            compute_wall_stats = None
+            load_wall_oracle_episode = None
+            slice_wall_oracle_episode = None
 
 PRIMITIVE_ACTION_DIM = 2
 ACTION_REPEAT = 5
