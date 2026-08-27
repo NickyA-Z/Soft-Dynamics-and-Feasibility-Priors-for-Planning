@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 import torch
 from omegaconf import OmegaConf
 
-DINO_WM_ROOT = Path("/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm")
+DINO_WM_ROOT = Path(
+    os.environ.get("DINO_WM_ROOT", Path.home() / "dino_wm")
+).expanduser().resolve()
 if str(DINO_WM_ROOT) not in sys.path:
     sys.path.append(str(DINO_WM_ROOT))
 
@@ -22,7 +25,8 @@ PRIMITIVE_ACTION_DIM = 2
 
 def load_world_model(device: torch.device):
     model_dir = DINO_WM_ROOT / "checkpoints" / "outputs" / "wall_single"
-    model_cfg = OmegaConf.load(model_dir / "hydra.yaml")
+    model_cfg_path = model_dir / "hydra.yaml"
+    model_cfg = OmegaConf.load(model_cfg_path)
     model_ckpt = model_dir / "checkpoints" / "model_latest.pth"
     model = load_model(model_ckpt, model_cfg, model_cfg.num_action_repeat, device=device)
     model.eval()
@@ -52,7 +56,7 @@ def load_world_model(device: torch.device):
     print("wm_action_dim:", int(wm_action_dim))
     print("frameskip:", getattr(model_cfg, "frameskip", None))
 
-    return world_model, action_repeat, model_cfg, model_ckpt
+    return world_model, action_repeat, model_cfg, model_cfg_path, model_ckpt
 
 
 def parse_args() -> argparse.Namespace:
@@ -78,7 +82,20 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data_dir = Path(args.data_root)
 
-    world_model, action_repeat, model_cfg, model_ckpt = load_world_model(device)
+    if args.episode_start < 0 or args.episode_end <= args.episode_start:
+        raise ValueError(
+            "Expected 0 <= episode_start < episode_end, got "
+            f"{args.episode_start}, {args.episode_end}"
+        )
+
+    states = torch.load(data_dir / "states.pth", map_location="cpu")
+    if args.episode_end > int(states.shape[0]):
+        raise ValueError(
+            f"episode_end={args.episode_end} exceeds the {states.shape[0]} "
+            "episodes available in the Wall dataset"
+        )
+
+    world_model, action_repeat, model_cfg, model_cfg_path, model_ckpt = load_world_model(device)
     wall_stats = compute_wall_stats(data_dir)
     action_mean = wall_stats["action_mean"].to(device=device, dtype=torch.float32)
     action_std = wall_stats["action_std"].to(device=device, dtype=torch.float32)
@@ -161,7 +178,7 @@ def main() -> None:
             "action_mean": action_mean.detach().cpu(),
             "action_std": action_std.detach().cpu(),
             "data_dir": str(data_dir),
-            "model_cfg": str(model_cfg),
+            "model_cfg": str(model_cfg_path),
             "model_ckpt": str(model_ckpt),
             "episode_start": int(args.episode_start),
             "episode_end": int(args.episode_end),
