@@ -24,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lambda-global", type=float, default=1.0)
     parser.add_argument("--lambda-local", type=float, default=1.0)
     parser.add_argument("--lambda-adversarial", type=float, default=1.0)
+    parser.add_argument("--lambda-calibration", type=float, default=0.1)
     parser.add_argument("--adversarial-starts", type=int, default=3)
     parser.add_argument("--adversarial-steps", type=int, default=12)
     parser.add_argument("--adversarial-every", type=int, default=4)
@@ -50,6 +51,7 @@ def main() -> None:
         lambda_global=args.lambda_global,
         lambda_local=args.lambda_local,
         lambda_adversarial=args.lambda_adversarial,
+        lambda_calibration=args.lambda_calibration,
         num_workers=args.num_workers,
         adversarial=AdversarialConfig(
             starts=args.adversarial_starts,

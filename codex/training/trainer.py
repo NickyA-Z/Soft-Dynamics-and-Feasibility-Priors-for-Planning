@@ -124,7 +124,10 @@ class PlannerAlignedTrainer:
                             margin=cfg.local_ranking_margin,
                             temperature=cfg.temperature,
                         )
-                    if batch_index % cfg.adversarial.every_batches == 0:
+                    if (
+                        (cfg.lambda_adversarial > 0.0 or cfg.lambda_calibration > 0.0)
+                        and batch_index % cfg.adversarial.every_batches == 0
+                    ):
                         adversarial_actions = mine_adversarial_actions(
                             self.model, history, action, z_next, self.low, self.high,
                             noise_level=cfg.contrastive_noise_level,
@@ -155,7 +158,11 @@ class PlannerAlignedTrainer:
                             )
                 adversarial_frequency_correction = (
                     cfg.adversarial.every_batches
-                    if (not warmup and batch_index % cfg.adversarial.every_batches == 0)
+                    if (
+                        not warmup
+                        and (cfg.lambda_adversarial > 0.0 or cfg.lambda_calibration > 0.0)
+                        and batch_index % cfg.adversarial.every_batches == 0
+                    )
                     else 0.0
                 )
                 loss = (
