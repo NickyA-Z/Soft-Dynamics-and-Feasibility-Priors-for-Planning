@@ -762,10 +762,17 @@ def validate_dataset(dataset: FeasibilityDataset) -> None:
     if len(counts) != 1:
         raise ValueError("Dataset tensors have different sample counts.")
 
-    if dataset.histories.shape[1:] != (3, 196, 394):
+    if dataset.histories.shape[1] < 1:
         raise ValueError(
-            "Expected histories shape [N, 3, 196, 394], got "
+            "Expected histories with a positive history length, got "
             f"{tuple(dataset.histories.shape)}"
+        )
+
+    if dataset.histories.shape[2:] != dataset.next_latents.shape[1:]:
+        raise ValueError(
+            "History latent shape must match next-latent shape: "
+            f"histories={tuple(dataset.histories.shape)}, "
+            f"next_latents={tuple(dataset.next_latents.shape)}"
         )
 
     if dataset.actions.shape[1] != 10:
