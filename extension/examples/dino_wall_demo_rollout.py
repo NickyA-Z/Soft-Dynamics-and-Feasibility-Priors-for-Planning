@@ -8,15 +8,14 @@ from pathlib import Path
 
 import gym
 import numpy as np
-from reimplementation.src.gvpwm.examples import dino_oracle_utils
 import torch
 from omegaconf import OmegaConf
 
-from reimplementation.src.gvpwm.adapters.dino_wm import DinoWorldModelAdapter
-from reimplementation.src.gvpwm.config import PlannerConfig
-from reimplementation.src.gvpwm.planner import GVPWMPlanner
-from reimplementation.src.gvpwm.video import PrecomputedVideoPlanSource
-from reimplementation.src.gvpwm.examples.dino_wall_oracle_utils import (
+from local.gvpwm.adapters.dino_wm import DinoWorldModelAdapter
+from local.gvpwm.config import PlannerConfig
+from local.gvpwm.planner import GVPWMPlanner
+from local.gvpwm.video import PrecomputedVideoPlanSource
+from local.gvpwm.examples.dino_wall_oracle_utils import (
     candidate_wall_episodes,
     compute_wall_stats,
     load_wall_oracle_episode,
@@ -31,7 +30,6 @@ from extension.examples.wall_experiment_presets import (
     EXPERIMENT_DESCRIPTIONS,
     apply_wall_experiment_preset,
 )
-from extension.feasibility2.integrate import load_feasibility_scorer
 
 
 DINO_WM_ROOT = Path("/home/nvzutphen/dino_wm")
@@ -178,18 +176,9 @@ def build_planner(
     if inner_steps is not None:
         config.alm.inner_steps = int(inner_steps)
 
-    feasibility_model = None
-    if config.feasibility.enabled:
-        feasibility_model = load_feasibility_scorer(
-            feasibility_checkpoint,
-            device=world_model.device,
-            freeze=True,
-        )
-
     return GVPWMPlanner(
         world_model=world_model,
         config=config,
-        feasibility_model=feasibility_model,
     )
 
 

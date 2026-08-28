@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from reimplementation.src.gvpwm.config import PlannerConfig
+from local.gvpwm.config import PlannerConfig
 
 
 EXPERIMENT_CHOICES = (
