@@ -33,9 +33,8 @@ from extension.examples.wall_experiment_presets import (
 )
 
 
-DINO_WM_ROOT = Path(
-    os.environ.get("DINO_WM_ROOT", "/home/scur0196/DL2---Grounding-Generated-Videos-/dino_wm")
-)
+DINO_WM_ROOT = Path("/home/nvzutphen/dino_wm")
+
 if str(DINO_WM_ROOT) not in sys.path:
     sys.path.append(str(DINO_WM_ROOT))
 
