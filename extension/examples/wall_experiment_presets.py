@@ -12,6 +12,7 @@ EXPERIMENT_CHOICES = (
     "rollout_baseline_no_refine",
     "rollout_dsm",
     "free_latent_dsm",
+    "free_latent_combined",
 )
 
 
@@ -24,6 +25,10 @@ EXPERIMENT_DESCRIPTIONS = {
     "rollout_baseline_no_refine": "Rollout baseline without feasibility or random action refinement.",
     "rollout_dsm": "Pure DSM rollout: world model rollout plus DSM feasibility only.",
     "free_latent_dsm": "Free-latent feasibility-only planner with DSM only and no dynamics.",
+    "free_latent_combined": (
+        "Free-latent planner with DSM, transition, and contrastive feasibility "
+        "guidance and no dynamics."
+    ),
 }
 
 
@@ -114,7 +119,22 @@ def apply_wall_experiment_preset(config: PlannerConfig, experiment: str) -> Plan
 
         config.feasibility.enabled = True
         config.feasibility.lambda_feasibility = 1.0
+        config.feasibility.lambda_dsm = 1.0
         config.feasibility.lambda_transition = 0.0
+        config.feasibility.lambda_contrastive_plan = 0.0
+        config.feasibility.lambda_action_consistency = 0.0
+        return config
+
+    if experiment == "free_latent_combined":
+        config.alm.dynamics_mode = "none"
+        config.alm.use_dynamics_constraints = False
+        config.alm.lambda_dynamics = 0.0
+
+        config.feasibility.enabled = True
+        config.feasibility.lambda_feasibility = 1.0
+        config.feasibility.lambda_dsm = 1.0
+        config.feasibility.lambda_transition = 1.0
+        config.feasibility.lambda_contrastive_plan = 1.0
         config.feasibility.lambda_action_consistency = 0.0
         return config
 
