@@ -31,6 +31,7 @@ from extension.examples.wall_experiment_presets import (
     EXPERIMENT_DESCRIPTIONS,
     apply_wall_experiment_preset,
 )
+from extension.feasibility2.integrate import load_feasibility_scorer
 
 
 DINO_WM_ROOT = Path("/home/nvzutphen/dino_wm")
@@ -176,9 +177,19 @@ def build_planner(
         config.refinement.enabled = False
     if inner_steps is not None:
         config.alm.inner_steps = int(inner_steps)
+
+    feasibility_model = None
+    if config.feasibility.enabled:
+        feasibility_model = load_feasibility_scorer(
+            feasibility_checkpoint,
+            device=world_model.device,
+            freeze=True,
+        )
+
     return GVPWMPlanner(
         world_model=world_model,
         config=config,
+        feasibility_model=feasibility_model,
     )
 
 
