@@ -1043,7 +1043,12 @@ def parse_args():
 
     parser.add_argument(
         "--action-search",
-        choices=("multistart_adam", "langevin_adam", "existing_alm"),
+        choices=(
+            "multistart_adam",
+            "langevin_adam",
+            "existing_alm",
+            "action_diffusion",
+        ),
         default="multistart_adam",
     )
     parser.add_argument("--num-search-chains", type=int, default=8)

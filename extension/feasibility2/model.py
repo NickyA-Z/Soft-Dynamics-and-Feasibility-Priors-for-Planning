@@ -118,6 +118,9 @@ class TransformerFeasibilityModel(nn.Module):
         )
 
         self.out_proj = nn.Linear(self.model_dim, self.token_dim)
+        # Predict noise added to the action while conditioning on the clean
+        # latent history and desired next latent.
+        self.action_out_proj = nn.Linear(self.model_dim, self.action_dim)
         self.energy_head = nn.Sequential(
             nn.LayerNorm(self.model_dim),
             nn.Linear(self.model_dim, self.model_dim),
@@ -225,14 +228,14 @@ class TransformerFeasibilityModel(nn.Module):
             self.token_dim,
         )
 
-    def _encode_next_features(
+    def _encode_features(
         self,
         history: torch.Tensor,
         action: torch.Tensor,
         z_next: torch.Tensor,
         noise_level: torch.Tensor | float,
     ) -> tuple[torch.Tensor, bool]:
-        """Encode a candidate next latent with the shared transformer."""
+        """Encode an action/next-latent pair with the shared transformer."""
         history, action, z_next, single = self._batchify(
             history,
             action,
@@ -260,10 +263,22 @@ class TransformerFeasibilityModel(nn.Module):
         x = x + self.pos_embed[:, : x.shape[1], :]
         x = self.transformer(x)
 
+        return x, single
+
+    def _encode_next_features(
+        self,
+        history: torch.Tensor,
+        action: torch.Tensor,
+        z_next: torch.Tensor,
+        noise_level: torch.Tensor | float,
+    ) -> tuple[torch.Tensor, bool]:
+        """Encode a candidate next latent with the shared transformer."""
+        features, single = self._encode_features(
+            history, action, z_next, noise_level
+        )
         next_start = 2 + self.history_length * self.num_tokens
         next_end = next_start + self.num_tokens
-
-        return x[:, next_start:next_end], single
+        return features[:, next_start:next_end], single
 
     def forward(
         self,
@@ -348,6 +363,60 @@ class TransformerFeasibilityModel(nn.Module):
             return loss_per_item.mean()
         raise ValueError(f"Unknown reduction: {reduction}")
 
+    def predict_action_noise(
+        self,
+        history: torch.Tensor,
+        noisy_action: torch.Tensor,
+        desired_next_latent: torch.Tensor,
+        noise_level: torch.Tensor | float,
+    ) -> torch.Tensor:
+        """Predict noise in an action conditioned on a desired transition."""
+        features, single = self._encode_features(
+            history, noisy_action, desired_next_latent, noise_level
+        )
+        prediction = self.action_out_proj(features[:, 0])
+        return prediction.squeeze(0) if single else prediction
+
+    def action_dsm_loss(
+        self,
+        history: torch.Tensor,
+        action: torch.Tensor,
+        desired_next_latent: torch.Tensor,
+        scheduler: SigmaScheduler | None = None,
+        noise_level=None,
+        reduction: Reduction = "mean",
+    ) -> torch.Tensor:
+        """DSM objective over expert actions; no negatives are required."""
+        history_b, action_b, next_b, _ = self._batchify(
+            history, action, desired_next_latent
+        )
+        if scheduler is not None:
+            sigma = scheduler.sample_sigmas(
+                action_b.shape[0], action_b.device, action_b.dtype
+            )
+            noisy_action, eps = scheduler.add_noise(action_b, sigma)
+            weight = scheduler.loss_weight(sigma).reshape(-1)
+        else:
+            sigma = self._noise_tensor(
+                noise_level, action_b.shape[0], action_b.device, action_b.dtype
+            )
+            eps = torch.randn_like(action_b)
+            noisy_action = action_b + sigma * eps
+            weight = torch.ones_like(sigma).reshape(-1)
+
+        pred_eps = self.predict_action_noise(
+            history_b, noisy_action, next_b, sigma
+        )
+        per_item = F.mse_loss(pred_eps, eps, reduction="none").mean(dim=-1)
+        per_item = per_item * weight
+        if reduction == "none":
+            return per_item
+        if reduction == "sum":
+            return per_item.sum()
+        if reduction == "mean":
+            return per_item.mean()
+        raise ValueError(f"Unknown reduction: {reduction}")
+
     def penalty(
         self,
         history: torch.Tensor,
@@ -430,7 +499,7 @@ class TransformerFeasibilityModel(nn.Module):
         unexpected_missing = [
             key
             for key in incompatible.missing_keys
-            if not key.startswith("energy_head.")
+            if not key.startswith(("energy_head.", "action_out_proj."))
         ]
         if unexpected_missing or incompatible.unexpected_keys:
             raise RuntimeError(
@@ -649,7 +718,7 @@ def load_feasibility_model_from_checkpoint(path, map_location="cpu") -> nn.Modul
         unexpected_missing = [
             key
             for key in incompatible.missing_keys
-            if not key.startswith("energy_head.")
+            if not key.startswith(("energy_head.", "action_out_proj."))
         ]
         if unexpected_missing or incompatible.unexpected_keys:
             raise RuntimeError(

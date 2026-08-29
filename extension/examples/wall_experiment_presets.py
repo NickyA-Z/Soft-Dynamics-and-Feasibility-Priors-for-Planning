@@ -13,6 +13,7 @@ EXPERIMENT_CHOICES = (
     "rollout_dsm",
     "free_latent_dsm",
     "free_latent_combined",
+    "free_latent_action_diffusion",
 )
 
 
@@ -28,6 +29,9 @@ EXPERIMENT_DESCRIPTIONS = {
     "free_latent_combined": (
         "Free-latent planner with DSM, transition, and contrastive feasibility "
         "guidance and no dynamics."
+    ),
+    "free_latent_action_diffusion": (
+        "Directly sample actions conditioned on the generated latent plan."
     ),
 }
 
@@ -136,6 +140,15 @@ def apply_wall_experiment_preset(config: PlannerConfig, experiment: str) -> Plan
         config.feasibility.lambda_transition = 1.0
         config.feasibility.lambda_contrastive_plan = 1.0
         config.feasibility.lambda_action_consistency = 0.0
+        return config
+
+    if experiment == "free_latent_action_diffusion":
+        config.alm.dynamics_mode = "none"
+        config.alm.use_dynamics_constraints = False
+        config.alm.lambda_dynamics = 0.0
+        config.feasibility.enabled = True
+        config.action_search.method = "action_diffusion"
+        config.refinement.enabled = False
         return config
 
     raise ValueError(f"Unknown wall experiment preset: {experiment}")

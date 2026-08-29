@@ -80,7 +80,6 @@ def _normalize_action(action: torch.Tensor, feasibility_model: nn.Module) -> tor
                 normalized = normalized / std
 
     return normalized
-
 def load_feasibility_scorer(
     checkpoint_path: str | Path,
     device: str | torch.device,
@@ -135,6 +134,11 @@ def load_feasibility_scorer(
             device=device,
             dtype=torch.float32,
         ).clamp_min(1e-8)
+    if action_scale is not None:
+        model.action_scale = float(action_scale)
+    model.action_sigma_min = float(checkpoint.get("sigma_min", 0.05))
+    model.action_sigma_max = float(checkpoint.get("sigma_max", 0.5))
+    model.lambda_action_dsm = float(checkpoint.get("lambda_action_dsm", 0.0))
 
     print("\nhas latent_mean:", hasattr(model, "latent_mean"))
     print("\nhas latent_std:", hasattr(model, "latent_std"))

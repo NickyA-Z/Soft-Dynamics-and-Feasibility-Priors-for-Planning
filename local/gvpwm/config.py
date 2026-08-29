@@ -81,6 +81,7 @@ class ActionSearchConfig:
         "existing_alm",
         "multistart_adam",
         "langevin_adam",
+        "action_diffusion",
     ] = "existing_alm"
 
     # Number of independent initial action trajectories.
@@ -98,6 +99,9 @@ class ActionSearchConfig:
     # Prevent raw parameters from saturating the tanh action transform.
     raw_action_limit: float | None = 3.0
 
+    # Reverse-denoising settings for a checkpoint trained with action DSM.
+    action_diffusion_steps: int = 20
+
     multistart_adam: MultiStartAdamConfig = field(
         default_factory=MultiStartAdamConfig
     )
@@ -111,6 +115,7 @@ class ActionSearchConfig:
             "existing_alm",
             "multistart_adam",
             "langevin_adam",
+            "action_diffusion",
         }
 
         if self.method not in valid_methods:
@@ -126,6 +131,9 @@ class ActionSearchConfig:
             raise ValueError(
                 "initialization_noise_std must be non-negative."
             )
+
+        if self.action_diffusion_steps < 2:
+            raise ValueError("action_diffusion_steps must be at least 2.")
 
         if (
             self.raw_action_limit is not None

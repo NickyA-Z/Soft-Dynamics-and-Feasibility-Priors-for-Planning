@@ -14,6 +14,10 @@ The DSM head keeps the existing ``out_proj`` name, preserving its state-dict
 keys. Older transformer checkpoints have no ``energy_head`` parameters; they
 can still be loaded for DSM inference, but their newly initialized energy head
 must be trained before it is used for contrastive ranking.
+
+Action DSM adds only ``action_out_proj`` to the same backbone. Old checkpoints
+can initialize it, but direct action sampling requires fine-tuning with a
+positive ``--lambda-action-dsm``.
 """
 
 from __future__ import annotations
@@ -154,6 +158,10 @@ def save_checkpoint(
             "train_metrics": train_metrics,
             "val_metrics": val_metrics,
             "lambda_delta": args.lambda_delta,
+            "lambda_latent_dsm": args.lambda_latent_dsm,
+            "lambda_action_dsm": args.lambda_action_dsm,
+            "sigma_min": args.sigma_min,
+            "sigma_max": args.sigma_max,
             "delta_target_mode": args.delta_target_mode,
             "lambda_contrastive": args.lambda_contrastive,
             "contrastive_margin": args.contrastive_margin,
@@ -260,6 +268,24 @@ def train_feasibility_model(
         num_heads=args.num_heads,
     ).to(device)
 
+    if args.init_checkpoint is not None:
+        initial = torch.load(args.init_checkpoint, map_location=device)
+        incompatible = model.load_state_dict(
+            initial["model_state_dict"], strict=False
+        )
+        allowed_missing = {
+            key for key in incompatible.missing_keys
+            if key.startswith(("energy_head.", "action_out_proj."))
+        }
+        unexpected_missing = set(incompatible.missing_keys) - allowed_missing
+        if unexpected_missing or incompatible.unexpected_keys:
+            raise RuntimeError(
+                "Incompatible initialization checkpoint: "
+                f"missing={sorted(unexpected_missing)}, "
+                f"unexpected={incompatible.unexpected_keys}"
+            )
+        print(f"Initialized model from {args.init_checkpoint}")
+
     print("=== Model configuration ===")
     for key, value in model.config_dict().items():
         print(f"  {key}: {value}")
@@ -301,6 +327,7 @@ def train_feasibility_model(
         train_sums = {
             "total": 0.0,
             "dsm": 0.0,
+            "action_dsm": 0.0,
             "delta": 0.0,
             "contrastive": 0.0,
             "hard_negative": 0.0,
@@ -339,6 +366,15 @@ def train_feasibility_model(
                     scheduler=scheduler,
                     reduction="mean",
                 )
+                action_dsm_loss = history.new_zeros(())
+                if args.lambda_action_dsm > 0.0:
+                    action_dsm_loss = model.action_dsm_loss(
+                        history,
+                        action,
+                        z_next,
+                        scheduler=scheduler,
+                        reduction="mean",
+                    )
 
             if profile and device.type == "cuda":
                 torch.cuda.synchronize()
@@ -430,7 +466,8 @@ def train_feasibility_model(
             auxiliary_done = time.perf_counter()
 
             loss = (
-                dsm_loss
+                args.lambda_latent_dsm * dsm_loss
+                + args.lambda_action_dsm * action_dsm_loss
                 + args.lambda_delta * delta_loss
                 + contrastive_weight * contrastive_loss
                 + args.lambda_hard_negative * hard_negative_loss
@@ -454,6 +491,9 @@ def train_feasibility_model(
 
             train_sums["total"] += loss.detach().float().item() * batch_count
             train_sums["dsm"] += dsm_loss.detach().float().item() * batch_count
+            train_sums["action_dsm"] += (
+                action_dsm_loss.detach().float().item() * batch_count
+            )
             train_sums["delta"] += delta_loss.detach().float().item() * batch_count
             train_count += batch_count
 
@@ -498,6 +538,7 @@ def train_feasibility_model(
         train_metrics = {
             "total": train_sums["total"] / max(train_count, 1),
             "dsm": train_sums["dsm"] / max(train_count, 1),
+            "action_dsm": train_sums["action_dsm"] / max(train_count, 1),
             "delta": train_sums["delta"] / max(train_count, 1),
             "contrastive": (train_sums["contrastive"] / max(contrastive_count, 1)),
             "hard_negative": train_sums["hard_negative"] / max(hard_negative_count, 1),
@@ -512,6 +553,7 @@ def train_feasibility_model(
         val_start = time.perf_counter()
 
         val_dsm_sum = 0.0
+        val_action_dsm_sum = 0.0
         val_delta_sum = 0.0
         val_count = 0
         val_contrastive_sum = 0.0
@@ -546,6 +588,15 @@ def train_feasibility_model(
                         scheduler=scheduler,
                         reduction="mean",
                     )
+                    action_dsm_loss = history.new_zeros(())
+                    if args.lambda_action_dsm > 0.0:
+                        action_dsm_loss = model.action_dsm_loss(
+                            history,
+                            action,
+                            z_next,
+                            scheduler=scheduler,
+                            reduction="mean",
+                        )
 
                     delta_loss = history.new_zeros(())
 
@@ -564,6 +615,9 @@ def train_feasibility_model(
 
                 batch_count = history.shape[0]
                 val_dsm_sum += dsm_loss.float().item() * batch_count
+                val_action_dsm_sum += (
+                    action_dsm_loss.float().item() * batch_count
+                )
                 val_delta_sum += delta_loss.float().item() * batch_count
                 val_count += batch_count
 
@@ -638,10 +692,12 @@ def train_feasibility_model(
         val_end = time.perf_counter()
 
         val_dsm = val_dsm_sum / max(val_count, 1)
+        val_action_dsm = val_action_dsm_sum / max(val_count, 1)
         val_delta = val_delta_sum / max(val_count, 1)
 
         val_metrics = {
             "dsm": val_dsm,
+            "action_dsm": val_action_dsm,
             "delta": val_delta,
             "contrastive": (
                 val_contrastive_sum / val_contrastive_count
@@ -670,7 +726,11 @@ def train_feasibility_model(
             ),
         }
 
-        checkpoint_metric = val_dsm + args.lambda_delta * val_delta
+        checkpoint_metric = (
+            args.lambda_latent_dsm * val_dsm
+            + args.lambda_action_dsm * val_action_dsm
+            + args.lambda_delta * val_delta
+        )
         if args.lambda_contrastive > 0.0:
             val_contrastive = val_metrics["contrastive"]
             checkpoint_metric = (
@@ -687,10 +747,12 @@ def train_feasibility_model(
             f"epoch {epoch:04d} | "
             f"train_total={train_metrics['total']:.6f} "
             f"train_dsm={train_metrics['dsm']:.6f} "
+            f"train_action_dsm={train_metrics['action_dsm']:.6f} "
             f"train_contrastive={train_metrics['contrastive']:.6f} | "
             f"train_hard={train_metrics['hard_negative']:.6f} "
             f"train_hard_acc={train_metrics['hard_margin_accuracy']:.3f} | "
             f"val_dsm={val_metrics['dsm']:.6f} "
+            f"val_action_dsm={val_metrics['action_dsm']:.6f} "
             f"val_contrastive={val_metrics['contrastive']:.6f} "
             f"val_hard={val_metrics['hard_negative']:.6f} "
             f"val_hard_acc={val_metrics['hard_margin_accuracy']:.3f}"
@@ -841,6 +903,11 @@ def parse_args() -> argparse.Namespace:
         "--checkpoint-out",
         default="checkpoints/feasibility.pt",
     )
+    parser.add_argument(
+        "--init-checkpoint",
+        default=None,
+        help="Optional existing feasibility checkpoint to fine-tune.",
+    )
 
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=32)
@@ -858,6 +925,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sigma-max", type=float, default=0.5)
 
     parser.add_argument("--lambda-delta", type=float, default=0.0)
+    parser.add_argument(
+        "--lambda-latent-dsm",
+        type=float,
+        default=1.0,
+        help="Weight of the existing next-latent denoising objective.",
+    )
+    parser.add_argument(
+        "--lambda-action-dsm",
+        type=float,
+        default=0.0,
+        help="Weight of positive-only action denoising conditioned on the transition.",
+    )
     parser.add_argument(
         "--delta-target-mode",
         choices=("current_delta", "wm_residual"),
@@ -932,6 +1011,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    if args.lambda_latent_dsm < 0.0 or args.lambda_action_dsm < 0.0:
+        raise ValueError("DSM loss weights must be non-negative.")
+    if args.sigma_min <= 0.0 or args.sigma_max <= args.sigma_min:
+        raise ValueError("Require 0 < --sigma-min < --sigma-max.")
 
     if not 0.0 < args.contrastive_fraction <= 1.0:
         raise ValueError("--contrastive-fraction must be in (0, 1].")

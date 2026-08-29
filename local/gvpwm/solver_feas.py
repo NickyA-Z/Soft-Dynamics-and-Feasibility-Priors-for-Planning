@@ -6,6 +6,7 @@ import os
 import torch
 import torch.nn as nn
 from local.feasibility2.integrate import score_trajectory_feasibility
+from extension.feasibility2.action_diffusion import sample_actions
 
 from .config import ALMConfig, FeasibilityConfig, LangevinActionConfig, ActionSearchConfig
 from .interfaces import CollocationResult, WorldModelAdapter
@@ -582,6 +583,91 @@ class LatentCollocationSolver:
         )
 
         action_search_method = self.action_search_config.method
+
+        if action_search_method == "action_diffusion":
+            if self.feasibility_model is None:
+                raise ValueError(
+                    "action_diffusion requires a feasibility checkpoint."
+                )
+            if getattr(self.feasibility_model, "lambda_action_dsm", 0.0) <= 0:
+                raise ValueError(
+                    "The checkpoint was not trained with --lambda-action-dsm > 0."
+                )
+
+            latent_mean = getattr(self.feasibility_model, "latent_mean", None)
+            latent_std = getattr(self.feasibility_model, "latent_std", None)
+            full_latents = torch.cat(
+                [latent_context, initial_latents[1:]], dim=0
+            )
+            if latent_mean is not None and latent_std is not None:
+                mean = latent_mean.to(full_latents)
+                std = latent_std.to(full_latents).clamp_min(1e-6)
+                full_latents = (full_latents - mean) / std
+
+            context_len = latent_context.shape[0]
+            generator = torch.Generator(device=current_latent.device)
+            generator.manual_seed(self.action_search_config.seed)
+            sampled_actions = []
+            for t in range(horizon):
+                end = context_len + t
+                history = full_latents[
+                    max(0, end - self.feasibility_model.history_length):end
+                ]
+                history = ensure_history_length(
+                    history,
+                    self.feasibility_model.history_length,
+                    pad_mode="repeat_first",
+                )
+                candidates = sample_actions(
+                    self.feasibility_model,
+                    history,
+                    full_latents[end],
+                    self.world_model.action_low,
+                    self.world_model.action_high,
+                    num_steps=self.action_search_config.action_diffusion_steps,
+                    sigma_min=getattr(
+                        self.feasibility_model, "action_sigma_min", 0.05
+                    ),
+                    sigma_max=getattr(
+                        self.feasibility_model, "action_sigma_max", 0.5
+                    ),
+                    generator=generator,
+                )
+                sampled_actions.append(candidates[0])
+            actions = torch.stack(sampled_actions)
+
+            with torch.no_grad():
+                objective, pieces = self._objective(
+                    latents=initial_latents,
+                    actions=actions,
+                    goal_latent=goal_latent,
+                    video_latents=video_latents,
+                    action_prior=action_prior,
+                )
+            residuals = torch.zeros(
+                (horizon,) + tuple(current_latent.shape),
+                device=current_latent.device,
+                dtype=current_latent.dtype,
+            )
+            diagnostics = {
+                key: float(value.detach().cpu())
+                if torch.is_tensor(value)
+                else float(value)
+                for key, value in pieces.items()
+            }
+            diagnostics["action_diffusion_steps"] = float(
+                self.action_search_config.action_diffusion_steps
+            )
+            return CollocationResult(
+                latents=initial_latents,
+                actions=actions,
+                objective=float(objective.detach().cpu()),
+                augmented_lagrangian=float(objective.detach().cpu()),
+                dynamics_residual_norm=0.0,
+                multipliers=residuals,
+                rho=0.0,
+                diagnostics=diagnostics,
+            )
 
         # The new action-search algorithms optimize through a world-model rollout.
         if action_search_method in {
