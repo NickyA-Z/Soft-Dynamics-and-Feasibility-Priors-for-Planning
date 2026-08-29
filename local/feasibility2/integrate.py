@@ -138,12 +138,29 @@ def load_feasibility_scorer(
             device=device,
             dtype=torch.float32,
         ).clamp_min(1e-8)
+    if action_scale is not None:
+        model.action_scale = float(action_scale)
+
+    # Action-diffusion metadata is stored at the checkpoint top level by the
+    # extension trainer. The local planner needs it to select the matching
+    # reverse-noise schedule and to reject genuinely untrained action heads.
+    model.action_sigma_min = float(checkpoint.get("sigma_min", 0.05))
+    model.action_sigma_max = float(checkpoint.get("sigma_max", 0.5))
+    model.lambda_action_dsm = float(
+        checkpoint.get("lambda_action_dsm", 0.0)
+    )
 
     print("\nhas latent_mean:", hasattr(model, "latent_mean"))
     print("\nhas latent_std:", hasattr(model, "latent_std"))
     print("has action_scale:", hasattr(model, "action_scale"))
     print("has action_mean:", hasattr(model, "action_mean"))
     print("has action_std:", hasattr(model, "action_std"))
+    print("lambda_action_dsm:", model.lambda_action_dsm)
+    print(
+        "action diffusion sigma range:",
+        model.action_sigma_min,
+        model.action_sigma_max,
+    )
     if hasattr(model, "latent_mean"):
         print("latent_mean shape:", model.latent_mean.shape)
         print("latent_std shape:", model.latent_std.shape)
