@@ -10,7 +10,7 @@ actions using DINO-WM world-model dynamics and learned feasibility objectives.
 
 The experiments compare four planning methods:
 
-1. **GVP-WM** — latent collocation with augmented-Lagrangian dynamics constraints.
+1. **GVP-WM** — latent collocation with augmented-Lagrangian dynamics constraints. 
 2. **Soft dynamics** — latent collocation with a fixed DINO-WM dynamics penalty.
 3. **Recursive rollout** — action-only optimization through recursive DINO-WM rollouts,
    using multi-chain Langevin–Adam search.
@@ -100,17 +100,6 @@ PUSHT_ORACLE_PROPRIO_GUIDANCE=0
 experiments. The diagnostic variables enable optional Wall and Push-T
 experiment behavior.
 
-## Testing
-
-Run the reimplementation test suite with:
-
-```bash
-cd reimplementation
-conda run -n dl2 python -m pytest
-```
-
-For a quick local validation, use the smoke-test instructions in
-`reimplementation/README.md`.
 
 ## Running experiments
 
@@ -155,9 +144,6 @@ The main reported configurations use:
 - A combined DSM, transition, and contrastive objective for the learned
   feasibility prior.
 
-Exact learning rates, horizon mappings, action bounds, checkpoint locations,
-Slurm commands, and evaluation settings are documented in
-`reimplementation/docs/EXPERIMENT_REPRODUCTION.md` and the configuration files.
 
 ## Limitations
 
@@ -174,6 +160,7 @@ Important limitations include:
 - Sensitivity to planner hyperparameters.
 - Predefined corruption types for offline feasibility evaluation.
 - No claim that offline feasibility ranking guarantees executable plans.
+- Recreation of GVP-WM based on paper but not on actual code
 
 ## Reference
 
