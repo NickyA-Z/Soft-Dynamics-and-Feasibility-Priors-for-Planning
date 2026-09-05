@@ -32,6 +32,10 @@ from local.gvpwm.langevin import (
 import torch.nn.functional as F
 from local.gvpwm.losses import scale_invariant_alignment
 
+import os # for prioro 3 sept 
+use_proprio_guidance = (
+    os.getenv("PUSHT_ORACLE_PROPRIO_GUIDANCE", "0") == "1"
+)
 
 DINO_WM_ROOT = Path("/home/nvzutphen/dino_wm")
 if str(DINO_WM_ROOT) not in sys.path:
@@ -156,9 +160,13 @@ def build_planner(
         world_model=world_model,
         config=PlannerConfig(
             alm=ALMConfig(
-                inner_steps=100,  #(22749227:25))
-                outer_steps=1,
-                learning_rate=0.03,  # 0.01# Adam step size for optimizing latent/action variables.
+                # The paper-faithful ALM baseline uses 25 primal steps per
+                # outer dual update and 25 dual updates. Other dynamics modes
+                # retain the existing 100-step Adam budget; their outer loop
+                # does not have an ALM interpretation.
+                inner_steps=25 if dynamics_mode == "alm" else 100,
+                outer_steps=25 if dynamics_mode == "alm" else 1,
+                learning_rate=0.05, #was 0.03 before 1 sept # 0.01# Adam step size for optimizing latent/action variables.
                 rho_init=1.0,
                 rho_growth=1.9,
                 rho_max=1_000.0,
@@ -174,7 +182,7 @@ def build_planner(
                 adam_eps=1e-8,  # Numerical epsilon used by Adam optimizer.
                 diagnostic_inner_interval=diagnostic_inner_interval,  # Frequency for inner optimization debug prints.
                 diagnostic_outer=diagnostic_outer,  # Whether to print after each outer loop.
-                residual_reduction="mean",  # How high-dimensional dynamics residual penalties are scaled.
+                residual_reduction="sum" if dynamics_mode == "alm" else "mean",  # How high-dimensional dynamics residual penalties are scaled.
                 diagnostic_grad_norms=False,  # If True, print gradient norms for action/latent parameters.
                 pad_initial_history=True,
                 history_action_pad="zeros",
@@ -193,10 +201,12 @@ def build_planner(
                 warm_start=False,  # Reuse previous solution as initialization for next MPC step.
             ),
             refinement= RefinementConfig(
-                enabled=False,  # If True, use extra sampling/refinement after gradient optimization.
+                enabled=dynamics_mode not in {"none", "soft"},#set to true 1 sept  # If True, use extra sampling/refinement after gradient optimization.
+                #enabled=dynamics_mode == "alm", # added 1 sept 
                 num_samples=500,  # Number of sampled candidate action sequences for refinement.
                 noise_variance=0.3,  # Sampling noise variance for refinement.
-                objective="planner", # new since juli 14
+                #objective="planner", # new since juli 14
+                objective="goal", # new since sept 1
             ),
             feasibility=FeasibilityConfig(
                 enabled=feasibility_enabled,  # If True, load and use learned feasibility model.
@@ -300,8 +310,13 @@ def _oracle_video_alignment_loss(self, latent, reference):
     #_debug_align_counter["n"] += 1
 
     #return visual_loss + 10.0 * proprio_loss
-    #return visual_loss
-    return visual_loss + 1.0 * proprio_loss # added 31 juli not sure about use expect that it cares more a baout action
+    # turned back on 3 sept 
+    if use_proprio_guidance:
+        return visual_loss + proprio_loss
+    return visual_loss
+
+    #return visual_loss 
+    # return visual_loss + 1.0 * proprio_loss # added 31 juli not sure about use expect that it cares more a baout action
 
 def _oracle_goal_loss(self, latent, goal_latent):
     return super(DinoWorldModelAdapter, self).goal_loss(latent, goal_latent)

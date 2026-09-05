@@ -331,4 +331,4 @@ def resolve_wall_data_dir(data_root: str | Path, split: str) -> Path:
     split_dir = root / split
     if split != "all" and split_dir.exists():
         return split_dir
-    return rootr
+    return root

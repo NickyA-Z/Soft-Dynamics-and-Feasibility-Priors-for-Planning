@@ -41,6 +41,9 @@ def apply_wall_experiment_preset(config: PlannerConfig, experiment: str) -> Plan
         config.alm.dynamics_mode = "alm"
         config.alm.use_dynamics_constraints = True
         config.alm.lambda_dynamics = 0.0
+        
+        config.alm.inner_steps = 25
+        config.alm.outer_steps = 25
 
         config.feasibility.enabled = False
         config.feasibility.lambda_feasibility = 1.0
@@ -63,6 +66,7 @@ def apply_wall_experiment_preset(config: PlannerConfig, experiment: str) -> Plan
         config.alm.dynamics_mode = "soft"
         config.alm.use_dynamics_constraints = False
         config.alm.lambda_dynamics = 10.0
+        config.alm.lambda_action = 0.0
 
         config.feasibility.enabled = False
         config.feasibility.lambda_feasibility = 1.0
@@ -85,11 +89,19 @@ def apply_wall_experiment_preset(config: PlannerConfig, experiment: str) -> Plan
         config.alm.dynamics_mode = "rollout"
         config.alm.use_dynamics_constraints = False
         config.alm.lambda_dynamics = 0.0
+        config.alm.lambda_action = 0.0
 
         config.feasibility.enabled = False
         config.feasibility.lambda_feasibility = 1.0
         config.feasibility.lambda_transition = 0.0
         config.feasibility.lambda_action_consistency = 0.0
+        
+        config.refinement.enabled = True
+        config.action_search.method = "langevin_adam"
+        config.action_search.num_starts = 4
+        config.action_search.langevin_adam.langevin_steps = 15
+        config.action_search.langevin_adam.adam_steps = 35
+
         return config
 
     if experiment == "rollout_baseline_no_refine":
@@ -120,6 +132,7 @@ def apply_wall_experiment_preset(config: PlannerConfig, experiment: str) -> Plan
         config.alm.dynamics_mode = "none"
         config.alm.use_dynamics_constraints = False
         config.alm.lambda_dynamics = 0.0
+        config.alm.lambda_action = 0.005
 
         config.feasibility.enabled = True
         config.feasibility.lambda_feasibility = 1.0
@@ -127,6 +140,8 @@ def apply_wall_experiment_preset(config: PlannerConfig, experiment: str) -> Plan
         config.feasibility.lambda_transition = 0.0
         config.feasibility.lambda_contrastive_plan = 0.0
         config.feasibility.lambda_action_consistency = 0.0
+
+        config.refinement.enabled = False # changed 3 sept 21:31
         return config
 
     if experiment == "free_latent_combined":
@@ -140,6 +155,9 @@ def apply_wall_experiment_preset(config: PlannerConfig, experiment: str) -> Plan
         config.feasibility.lambda_transition = 1.0
         config.feasibility.lambda_contrastive_plan = 1.0
         config.feasibility.lambda_action_consistency = 0.0
+
+        config.refinement.enabled = False
+        
         return config
 
     if experiment == "free_latent_action_diffusion":

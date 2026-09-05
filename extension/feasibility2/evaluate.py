@@ -21,6 +21,10 @@ except ImportError:
     from extension.feasibility2.dataset import load_tensor_dataset
     from extension.feasibility2.model import FeasibilityModel, load_feasibility_model_from_checkpoint
 
+torch.manual_seed(0)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(0)
+
 def print_metrics_section(title: str, metrics: dict[str, float]) -> None:
     print("\n" + "=" * 80)
     print(title)

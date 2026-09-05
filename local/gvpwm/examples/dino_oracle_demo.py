@@ -184,8 +184,8 @@ def build_planner(
         world_model=world_model,
         config=PlannerConfig(
             alm=ALMConfig(
-                inner_steps=inner_steps,
-                outer_steps=outer_steps,
+                inner_steps=100,
+                outer_steps=1,
                 learning_rate=learning_rate,
                 rho_init=1.0,
                 rho_growth=1.9,
@@ -207,7 +207,7 @@ def build_planner(
             mpc=MPCConfig(
                 horizon=horizon,
                 execution_stride=1,
-                warm_start=True,
+                warm_start=False,
             ),
             refinement=RefinementConfig(
                 enabled=not disable_refinement,
