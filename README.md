@@ -176,12 +176,14 @@ Important limitations include:
 - Recreation of GVP-WM based on paper but not on actual code
 
 ## Reference
-
 This repository accompanies:
 
 > **Soft Dynamics and Feasibility Priors for Grounding Generated Video Plans**
 
-It also contains reproduction code related to:
+Our work builds upon [GVP-WM](https://arxiv.org/abs/2602.01960), which
+introduces a world-model-based approach for grounding generated video plans
+into feasible action sequences.
 
-> **Grounding Generated Videos in Feasible Plans via World Models**
-> (GVP-WM).
+> Christos Ziakas, Amir Bar, and Alessandra Russo.
+> [Grounding Generated Videos in Feasible Plans via World Models](https://arxiv.org/abs/2602.01960).
+> arXiv:2602.01960, 2026.
