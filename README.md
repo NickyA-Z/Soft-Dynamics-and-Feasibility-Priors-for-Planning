@@ -56,13 +56,26 @@ The reported experiments show that:
 ## Repository structure
 
 ```text
-.
-├── .env.example
-├── dino_wm/                 # DINO-WM code and environment wrappers
-├── reimplementation/        # GVP-WM reproduction and planner experiments
-├── extension/               # Feasibility-prior and residual experiments
-├── original_paper/          # Paper sources and reference material
-└── final_report_draft/      # LaTeX report draft
+root/                       
+├── gvpwm/
+│   ├── planning/            # planner, solvers, config, interfaces
+│   ├── feasibility/         # models, losses, datasets, training utilities
+│   ├── Langevin/            # Langevin and action-search code
+│   ├── adapters/            # DINO-WM integration
+│   └── tasks/
+│       ├── pusht/           # task-specific loading and utilities
+│       └── wall/
+├── scripts/
+│   ├── pusht/
+│   │   ├── train_pusht.py        
+│   │   └── build_pusht.py 
+│   │   
+│   └── wall/
+│        ├── build_wall.py 
+│        └── train_wall.py        
+│       
+├── dino_wm/               
+└── README.md
 ```
 
 Large assets are not included in Git. These may include datasets, model
